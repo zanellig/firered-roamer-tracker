@@ -7,6 +7,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import textwrap
 import time
 import unittest
 
@@ -322,6 +323,46 @@ class TrackerWindowDisplayTests(unittest.TestCase):
         self.assertEqual(window.match_text.text(), "¡MISMA ZONA!")
         self.assertEqual(window.match_hint.text(), "")
         window.close()
+
+
+class CloseButtonTests(unittest.TestCase):
+    def test_close_button_exits_the_application(self) -> None:
+        environment = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+        script = textwrap.dedent(
+            f"""
+            import sys
+            sys.path.insert(0, {str(ROOT)!r})
+
+            from PySide6.QtCore import QTimer
+            from PySide6.QtWidgets import QApplication, QToolButton
+            from roamer_tracker import TrackerWindow
+
+            app = QApplication([])
+            window = TrackerWindow(
+                "127.0.0.1",
+                55355,
+                0.2,
+                start_worker=False,
+                pin_controller=None,
+            )
+            window.show()
+            close_button = window.findChild(QToolButton, "closeButton")
+            QTimer.singleShot(0, close_button.click)
+            QTimer.singleShot(300, lambda: app.exit(7))
+            raise SystemExit(app.exec())
+            """
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 @unittest.skipIf(os.name == "nt", "POSIX SIGINT subprocess behavior")

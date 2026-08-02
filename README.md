@@ -25,7 +25,8 @@ La ventana se puede arrastrar desde la barra superior y queda sobre las demás
 por defecto. El botón **FIJO** permite desactivar ese comportamiento. Si el
 juego todavía no está abierto o se corta la conexión, el rastreador sigue
 intentando conectarse sin cerrarse. `Ctrl+C` desde la terminal cierra la
-ventana y el lector de RAM sin mostrar un traceback.
+ventana y el lector de RAM sin mostrar un traceback. El botón **×** también
+cierra por completo la aplicación y detiene el lector.
 
 ## Pronóstico de movimiento
 

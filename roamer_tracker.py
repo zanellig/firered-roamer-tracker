@@ -865,6 +865,9 @@ class TrackerWindow(QWidget):
     def closeEvent(self, event: QCloseEvent) -> None:
         self.stop_tracking()
         event.accept()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def stop_tracking(self) -> None:
         """Stop the polling thread once, regardless of the shutdown source."""
@@ -914,7 +917,6 @@ def main() -> int:
 
     def request_shutdown() -> None:
         window.close()
-        app.quit()
 
     def handle_interrupt(_signum, _frame) -> None:
         QTimer.singleShot(0, request_shutdown)
