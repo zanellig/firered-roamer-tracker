@@ -1,6 +1,6 @@
 [project]
-name = "firered-suicune-tracker"
-version = "0.1.0"
+name = "firered-roamer-tracker"
+version = "0.3.0"
 description = "Always-on-top FireRed roaming Pokémon tracker"
 readme = "README.md"
 license = "MIT"

@@ -1,13 +1,16 @@
-"""Always-on-top desktop GUI for the FireRed Suicune RAM tracker."""
+"""Always-on-top desktop GUI for the FireRed roaming Pokémon tracker."""
 
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import signal
 from threading import Event
+from typing import Protocol
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QThread, QTimer, Signal
+from PySide6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage
 from PySide6.QtGui import (
     QColor,
     QCloseEvent,
@@ -32,18 +35,37 @@ from PySide6.QtWidgets import (
 
 if __package__:
     from .tracker import (
+        ENTEI,
         Location,
+        RAIKOU,
+        RoamerSpecies,
+        SUICUNE,
         RetroArchNCI,
         TrackerError,
         TrackerSnapshot,
         read_snapshot,
     )
 else:
-    from tracker import Location, RetroArchNCI, TrackerError, TrackerSnapshot, read_snapshot
+    from tracker import (
+        ENTEI,
+        Location,
+        RAIKOU,
+        RoamerSpecies,
+        SUICUNE,
+        RetroArchNCI,
+        TrackerError,
+        TrackerSnapshot,
+        read_snapshot,
+    )
 
 
 APP_ROOT = Path(__file__).resolve().parent
 ASSET_ROOT = APP_ROOT / "assets"
+ROAMER_ASSETS = {
+    RAIKOU: ASSET_ROOT / "raikou.png",
+    ENTEI: ASSET_ROOT / "entei.png",
+    SUICUNE: ASSET_ROOT / "suicune.png",
+}
 
 NAVY = QColor("#172640")
 INK = QColor("#101b2d")
@@ -51,6 +73,60 @@ CYAN = QColor("#49b8d0")
 CORAL = QColor("#e2554d")
 GOLD = QColor("#f1c84b")
 WHITE = QColor("#fff9e8")
+
+
+def _format_probability(probability: float) -> str:
+    return f"{probability:.1%}".replace(".", ",")
+
+
+class PinController(Protocol):
+    def toggle(self) -> bool: ...
+
+
+class KWinPinController:
+    """Toggle KWin's real keep-above state on the active Wayland window."""
+
+    SHORTCUT = "Window Above Other Windows"
+
+    def __init__(self, interface: QDBusInterface) -> None:
+        self.interface = interface
+
+    @classmethod
+    def for_current_session(cls) -> KWinPinController | None:
+        app = QApplication.instance()
+        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").casefold()
+        if app is None or app.platformName() != "wayland" or "kde" not in desktop:
+            return None
+        interface = QDBusInterface(
+            "org.kde.kglobalaccel",
+            "/component/kwin",
+            "org.kde.kglobalaccel.Component",
+            QDBusConnection.sessionBus(),
+        )
+        if not interface.isValid():
+            return None
+        return cls(interface)
+
+    def toggle(self) -> bool:
+        shortcuts_reply = self.interface.call("shortcutNames")
+        if shortcuts_reply.type() != QDBusMessage.MessageType.ReplyMessage:
+            return False
+        arguments = shortcuts_reply.arguments()
+        if (
+            len(arguments) != 1
+            or not isinstance(arguments[0], list)
+            or self.SHORTCUT not in arguments[0]
+        ):
+            return False
+        reply = self.interface.call("invokeShortcut", self.SHORTCUT)
+        return reply.type() == QDBusMessage.MessageType.ReplyMessage
+
+
+class _AutoPinController:
+    pass
+
+
+AUTO_PIN_CONTROLLER = _AutoPinController()
 
 
 class TrackerThread(QThread):
@@ -139,7 +215,7 @@ class KantoMap(QWidget):
         super().__init__(parent)
         self.setObjectName("kantoMap")
         self.setFixedSize(480, 320)
-        self.setAccessibleName("Mapa de Kanto con la ubicación de Suicune y del jugador")
+        self.setAccessibleName("Mapa de Kanto con la ubicación del roamer y del jugador")
         self._map = QPixmap(str(ASSET_ROOT / "kanto_map.png"))
         self._snapshot: TrackerSnapshot | None = None
 
@@ -167,13 +243,20 @@ class KantoMap(QWidget):
         )
 
         if self._snapshot is not None:
+            if (
+                self._snapshot.roamer.active
+                and not self._snapshot.same_area
+                and self._snapshot.forecast is not None
+            ):
+                self._draw_forecast(painter, self._snapshot)
             player = self._point(self._snapshot.player)
-            suicune = self._point(self._snapshot.suicune)
+            roamer = self._point(self._snapshot.roamer.location)
+            marker = self._snapshot.roamer.species.name[0]
             if self._snapshot.same_area and player is not None:
-                self._draw_match(painter, player)
+                self._draw_match(painter, player, marker)
             else:
-                if suicune is not None:
-                    self._draw_marker(painter, suicune, CORAL, "S", diamond=True)
+                if self._snapshot.roamer.active and roamer is not None:
+                    self._draw_marker(painter, roamer, CORAL, marker, diamond=True)
                 if player is not None:
                     self._draw_marker(painter, player, CYAN, "V")
 
@@ -183,6 +266,87 @@ class KantoMap(QWidget):
 
     def _scaled(self, point: tuple[float, float]) -> tuple[float, float]:
         return point[0] * self.width() / 240, point[1] * self.height() / 160
+
+    def _route_rect(self, location: Location) -> QRectF | None:
+        bounds = location.map_bounds
+        if bounds is None:
+            return None
+        scale_x = self.width() / 240
+        scale_y = self.height() / 160
+        return QRectF(
+            (8 * bounds.x + 32) * scale_x,
+            (8 * bounds.y + 32) * scale_y,
+            8 * bounds.width * scale_x,
+            8 * bounds.height * scale_y,
+        )
+
+    def _draw_forecast(self, painter: QPainter, snapshot: TrackerSnapshot) -> None:
+        forecast = snapshot.forecast
+        if forecast is None:
+            return
+        recommendation = forecast.recommendation
+        probability_labels: list[QRectF] = []
+        for chance in forecast.likely_routes:
+            route_rect = self._route_rect(chance.location)
+            if route_rect is None:
+                continue
+            recommended = (
+                recommendation is not None
+                and recommendation.route.number == chance.location.number
+            )
+            fill = QColor(241, 200, 75, 72 if recommended else 40)
+            painter.setBrush(fill)
+            painter.setPen(
+                QPen(
+                    GOLD,
+                    3 if recommended else 2,
+                    Qt.PenStyle.SolidLine if recommended else Qt.PenStyle.DashLine,
+                )
+            )
+            painter.drawRoundedRect(route_rect, 3, 3)
+            probability_labels.append(
+                self._draw_probability(
+                    painter,
+                    route_rect.center(),
+                    chance.probability,
+                    probability_labels,
+                )
+            )
+
+    def _draw_probability(
+        self,
+        painter: QPainter,
+        center: QPointF,
+        probability: float,
+        occupied: list[QRectF],
+    ) -> QRectF:
+        base_rect = QRectF(center.x() - 20, center.y() - 7, 40, 14)
+        label_rect = base_rect
+        for offset_x, offset_y in (
+            (0, 0),
+            (0, -16),
+            (0, 16),
+            (-22, 0),
+            (22, 0),
+        ):
+            candidate = base_rect.translated(offset_x, offset_y)
+            if not any(candidate.intersects(other) for other in occupied):
+                label_rect = candidate
+                break
+        painter.setPen(QPen(GOLD, 1))
+        painter.setBrush(QColor(16, 27, 45, 225))
+        painter.drawRoundedRect(label_rect, 4, 4)
+        font = QFont(self.font())
+        font.setBold(True)
+        font.setPixelSize(8)
+        painter.setFont(font)
+        painter.setPen(WHITE)
+        painter.drawText(
+            label_rect,
+            Qt.AlignmentFlag.AlignCenter,
+            _format_probability(probability),
+        )
+        return label_rect
 
     def _draw_marker(
         self,
@@ -214,14 +378,25 @@ class KantoMap(QWidget):
         painter.setFont(font)
         painter.drawText(QRectF(x - 9, y - 9, 18, 18), Qt.AlignmentFlag.AlignCenter, label)
 
-    def _draw_match(self, painter: QPainter, point: tuple[float, float]) -> None:
+    def _draw_match(
+        self,
+        painter: QPainter,
+        point: tuple[float, float],
+        roamer_marker: str,
+    ) -> None:
         x, y = self._scaled(point)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setBrush(QColor(241, 200, 75, 70))
         painter.setPen(QPen(GOLD, 3))
         painter.drawEllipse(QRectF(x - 18, y - 18, 36, 36))
         self._draw_marker(painter, (point[0] - 2.5, point[1]), CYAN, "V")
-        self._draw_marker(painter, (point[0] + 2.5, point[1]), CORAL, "S", diamond=True)
+        self._draw_marker(
+            painter,
+            (point[0] + 2.5, point[1]),
+            CORAL,
+            roamer_marker,
+            diamond=True,
+        )
 
 
 class TrackerWindow(QWidget):
@@ -232,18 +407,26 @@ class TrackerWindow(QWidget):
         interval: float,
         *,
         start_worker: bool = True,
+        pin_controller: PinController | None | _AutoPinController = AUTO_PIN_CONTROLLER,
     ) -> None:
         super().__init__()
         self.host = host
         self.port = port
+        if pin_controller is AUTO_PIN_CONTROLLER:
+            self._pin_controller: PinController | None = (
+                KWinPinController.for_current_session()
+            )
+        else:
+            self._pin_controller = pin_controller
+        self._initial_pin_pending = self._pin_controller is not None
+        self._displayed_species: RoamerSpecies | None = None
         self.setObjectName("shell")
-        self.setWindowTitle("Rastreador de Suicune")
+        self.setWindowTitle("Rastreador de roamers")
         self.setWindowIcon(QIcon(str(ASSET_ROOT / "app_icon.png")))
-        self.setWindowFlags(
-            Qt.WindowType.Tool
-            | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-        )
+        flags = Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+        if self._pin_controller is None:
+            flags |= Qt.WindowType.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(512, 680)
         self._build_ui()
@@ -326,24 +509,31 @@ class TrackerWindow(QWidget):
         legend = QHBoxLayout()
         legend.setSpacing(14)
         legend.addWidget(self._legend("●", "VOS", "player"))
-        legend.addWidget(self._legend("◆", "SUICUNE", "suicune"))
+        self.roamer_legend_label = QLabel("ROAMER")
+        legend.addWidget(
+            self._legend(
+                "◆",
+                "ROAMER",
+                "roamer",
+                label=self.roamer_legend_label,
+            )
+        )
+        legend.addWidget(self._legend("▱", "PRÓX.", "next"))
         legend.addStretch()
-        map_note = QLabel("MAPA ORIGINAL · FIRERED")
-        map_note.setObjectName("mapNote")
-        legend.addWidget(map_note)
         layout.addLayout(legend)
 
         self.match_banner = QFrame()
         self.match_banner.setObjectName("matchBanner")
         self.match_banner.setProperty("matched", False)
+        self.match_banner.setProperty("mode", "idle")
         match_layout = QHBoxLayout(self.match_banner)
         match_layout.setContentsMargins(12, 8, 12, 8)
         match_layout.setSpacing(8)
         self.match_icon = QLabel("○")
         self.match_icon.setObjectName("matchIcon")
-        self.match_text = QLabel("Todavía no comparten zona")
+        self.match_text = QLabel("Calculando próximo movimiento")
         self.match_text.setObjectName("matchText")
-        self.match_hint = QLabel("Cambiá de área para mover al roamer")
+        self.match_hint = QLabel("")
         self.match_hint.setObjectName("matchHint")
         match_layout.addWidget(self.match_icon)
         match_layout.addWidget(self.match_text)
@@ -353,14 +543,17 @@ class TrackerWindow(QWidget):
 
         locations = QHBoxLayout()
         locations.setSpacing(10)
-        self.suicune_location = QLabel("—")
+        self.roamer_location = QLabel("—")
         self.player_location = QLabel("—")
+        self.roamer_heading = QLabel("ROAMER")
+        self.roamer_sprite = QLabel()
         locations.addWidget(
             self._location_card(
-                "SUICUNE",
-                self.suicune_location,
-                "suicuneCard",
-                ASSET_ROOT / "suicune.png",
+                "ROAMER",
+                self.roamer_location,
+                "roamerCard",
+                heading=self.roamer_heading,
+                sprite=self.roamer_sprite,
             ),
             3,
         )
@@ -371,14 +564,21 @@ class TrackerWindow(QWidget):
         layout.addLayout(locations)
         root.addWidget(content)
 
-    def _legend(self, symbol: str, text: str, tone: str) -> QWidget:
+    def _legend(
+        self,
+        symbol: str,
+        text: str,
+        tone: str,
+        *,
+        label: QLabel | None = None,
+    ) -> QWidget:
         item = QWidget()
         row = QHBoxLayout(item)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(5)
         icon = QLabel(symbol)
         icon.setObjectName(f"{tone}Legend")
-        label = QLabel(text)
+        label = label or QLabel(text)
         label.setObjectName("legendLabel")
         row.addWidget(icon)
         row.addWidget(label)
@@ -390,27 +590,31 @@ class TrackerWindow(QWidget):
         value: QLabel,
         object_name: str,
         sprite_path: Path | None = None,
+        *,
+        heading: QLabel | None = None,
+        sprite: QLabel | None = None,
     ) -> QFrame:
         card = QFrame()
         card.setObjectName(object_name)
         row = QHBoxLayout(card)
         row.setContentsMargins(11, 8, 11, 8)
         row.setSpacing(9)
-        if sprite_path is not None:
-            sprite = QLabel()
-            sprite.setObjectName("suicuneSprite")
-            pixmap = QPixmap(str(sprite_path)).scaled(
-                58,
-                58,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.FastTransformation,
-            )
-            sprite.setPixmap(pixmap)
+        if sprite_path is not None or sprite is not None:
+            sprite = sprite or QLabel()
+            sprite.setObjectName("roamerSprite")
+            if sprite_path is not None:
+                pixmap = QPixmap(str(sprite_path)).scaled(
+                    58,
+                    58,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.FastTransformation,
+                )
+                sprite.setPixmap(pixmap)
             sprite.setFixedSize(58, 58)
             row.addWidget(sprite)
         labels = QVBoxLayout()
         labels.setSpacing(2)
-        heading = QLabel(title)
+        heading = heading or QLabel(title)
         heading.setObjectName("cardHeading")
         value.setObjectName("locationValue")
         value.setWordWrap(True)
@@ -491,9 +695,10 @@ class TrackerWindow(QWidget):
                 font-weight: 700;
                 letter-spacing: 1px;
             }}
-            QLabel#endpoint, QLabel#mapNote {{ color: #7387a1; font-size: 9px; }}
+            QLabel#endpoint {{ color: #7387a1; font-size: 9px; }}
             QLabel#playerLegend {{ color: #49b8d0; font-size: 15px; }}
-            QLabel#suicuneLegend {{ color: #e2554d; font-size: 15px; }}
+            QLabel#roamerLegend {{ color: #e2554d; font-size: 15px; }}
+            QLabel#nextLegend {{ color: #f1c84b; font-size: 15px; }}
             QLabel#legendLabel {{ color: #9aabc1; font-size: 9px; font-weight: 700; }}
             QFrame#matchBanner {{
                 background: #172640;
@@ -504,17 +709,23 @@ class TrackerWindow(QWidget):
                 background: #443917;
                 border-color: #f1c84b;
             }}
+            QFrame#matchBanner[mode="cross"] {{
+                background: #302d1d;
+                border-color: #f1c84b;
+            }}
             QLabel#matchIcon {{ color: #7387a1; font-size: 19px; }}
             QFrame#matchBanner[matched="true"] QLabel#matchIcon {{ color: #f1c84b; }}
+            QFrame#matchBanner[mode="cross"] QLabel#matchIcon {{ color: #f1c84b; }}
             QLabel#matchText {{ color: #dce5ec; font-size: 11px; font-weight: 700; }}
             QFrame#matchBanner[matched="true"] QLabel#matchText {{ color: #fff4b0; }}
             QLabel#matchHint {{ color: #7387a1; font-size: 9px; }}
-            QFrame#suicuneCard, QFrame#playerCard {{
+            QFrame#matchBanner[mode="cross"] QLabel#matchHint {{ color: #d7bd63; }}
+            QFrame#roamerCard, QFrame#playerCard {{
                 background: #172640;
                 border: 1px solid #304260;
                 border-radius: 8px;
             }}
-            QFrame#suicuneCard {{ border-left: 3px solid #e2554d; }}
+            QFrame#roamerCard {{ border-left: 3px solid #e2554d; }}
             QFrame#playerCard {{ border-left: 3px solid #49b8d0; }}
             QLabel#cardHeading {{
                 color: #8296af;
@@ -533,31 +744,130 @@ class TrackerWindow(QWidget):
         self.connection_label.setText("EN VIVO" if live else "SIN CONEXIÓN · REINTENTANDO")
 
     def show_snapshot(self, snapshot: TrackerSnapshot) -> None:
+        self._show_species(snapshot.roamer.species)
         self.map.set_snapshot(snapshot)
-        self.suicune_location.setText(snapshot.suicune.name)
+        self.roamer_location.setText(
+            snapshot.roamer.location.name if snapshot.roamer.active else "INACTIVO"
+        )
         self.player_location.setText(snapshot.player.name)
-        self.match_banner.setProperty("matched", snapshot.same_area)
-        self.match_banner.style().unpolish(self.match_banner)
-        self.match_banner.style().polish(self.match_banner)
-        if snapshot.same_area:
+        mode = "idle"
+        tooltip = ""
+        if not snapshot.roamer.active:
+            self.match_icon.setText("—")
+            self.match_text.setText("El roamer no está activo")
+            self.match_hint.setText("Todavía no recorre Kanto")
+        elif snapshot.same_area:
+            mode = "matched"
             self.match_icon.setText("◎")
             self.match_text.setText("¡MISMA ZONA!")
-            self.match_hint.setText("Caminá en el pasto")
+            self.match_hint.setText("")
+        elif snapshot.forecast is not None:
+            recommendation = snapshot.forecast.recommendation
+            tooltip = "Próximo movimiento: " + ", ".join(
+                f"{chance.location.name} "
+                f"{_format_probability(chance.probability)}"
+                for chance in snapshot.forecast.likely_routes
+            )
+            if recommendation is not None:
+                mode = "cross"
+                self.match_icon.setText("↗")
+                self.match_text.setText(
+                    f"CRUZÁ A {recommendation.route.name.upper()}"
+                    f" · {_format_probability(recommendation.probability)}"
+                )
+                self.match_hint.setText("INTERCEPCIÓN EN EL PRÓXIMO CAMBIO")
+            else:
+                self.match_icon.setText("○")
+                self.match_text.setText("PRÓXIMO MOVIMIENTO")
+                self.match_hint.setText("RUTAS PROBABLES EN EL MAPA")
         else:
             self.match_icon.setText("○")
-            self.match_text.setText("Todavía no comparten zona")
-            self.match_hint.setText("Cambiá de área para mover al roamer")
+            self.match_text.setText("Movimiento no disponible")
+            self.match_hint.setText("")
+
+        self.match_banner.setToolTip(tooltip)
+        self.match_banner.setProperty("matched", snapshot.same_area)
+        self.match_banner.setProperty("mode", mode)
+        self.match_banner.style().unpolish(self.match_banner)
+        self.match_banner.style().polish(self.match_banner)
+
+    def _show_species(self, species: RoamerSpecies) -> None:
+        if species == self._displayed_species:
+            return
+        self._displayed_species = species
+        name = species.name.upper()
+        sprite_path = ROAMER_ASSETS[species]
+        sprite = QPixmap(str(sprite_path)).scaled(
+            58,
+            58,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.FastTransformation,
+        )
+        self.roamer_sprite.setPixmap(sprite)
+        self.roamer_heading.setText(name)
+        self.roamer_legend_label.setText(name)
+        self.setWindowTitle(f"Rastreador de {species.name}")
+        self.setWindowIcon(QIcon(str(sprite_path)))
 
     def set_always_on_top(self, enabled: bool) -> None:
+        if self._pin_controller is not None:
+            if self._initial_pin_pending:
+                # A click before the first activation changes the requested
+                # state from the default (unpinned in KWin). Do not toggle the
+                # previously active application by accident.
+                self._initial_pin_pending = False
+                if not enabled:
+                    return
+            if self._pin_controller.toggle():
+                return
+            # If the desktop integration disappears, keep the portable Qt
+            # behavior available instead of leaving a dead control.
+            self._pin_controller = None
+        self._set_qt_always_on_top(enabled)
+
+    def _set_qt_always_on_top(self, enabled: bool) -> None:
         position = self.pos()
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, enabled)
         # Qt hides a top-level widget when a window flag changes.
         self.show()
         self.move(position)
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._initial_pin_pending:
+            return
+        app = QApplication.instance()
+        if app is not None and app.platformName() != "offscreen":
+            self.activateWindow()
+        QTimer.singleShot(50, self._apply_initial_pin)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if (
+            event.type() == QEvent.Type.ActivationChange
+            and self._initial_pin_pending
+            and self.isActiveWindow()
+        ):
+            QTimer.singleShot(0, self._apply_initial_pin)
+
+    def _apply_initial_pin(self) -> None:
+        if (
+            self._pin_controller is None
+            or not self._initial_pin_pending
+            or not self.isActiveWindow()
+        ):
+            return
+        self._initial_pin_pending = False
+        if not self._pin_controller.toggle():
+            self._pin_controller = None
+            self._set_qt_always_on_top(True)
+
     def closeEvent(self, event: QCloseEvent) -> None:
         self.stop_tracking()
         event.accept()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def stop_tracking(self) -> None:
         """Stop the polling thread once, regardless of the shutdown source."""
@@ -583,7 +893,7 @@ def positive_interval(value: str) -> float:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Ventana flotante para rastrear a Suicune en Pokémon FireRed."
+        description="Ventana flotante para rastrear al roamer de Pokémon FireRed."
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=positive_port, default=55355)
@@ -591,7 +901,7 @@ def main() -> int:
     args = parser.parse_args()
 
     app = QApplication([])
-    app.setApplicationName("Rastreador de Suicune")
+    app.setApplicationName("Rastreador de roamers")
     app.setQuitOnLastWindowClosed(True)
     window = TrackerWindow(args.host, args.port, args.interval)
     app.aboutToQuit.connect(window.stop_tracking)
@@ -607,7 +917,6 @@ def main() -> int:
 
     def request_shutdown() -> None:
         window.close()
-        app.quit()
 
     def handle_interrupt(_signum, _frame) -> None:
         QTimer.singleShot(0, request_shutdown)
