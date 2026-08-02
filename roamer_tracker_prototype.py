@@ -661,7 +661,7 @@ class TownMapVariant(Variant):
     KEY = "B"
     NAME = "Mapa del pueblo"
     SIZE = (448, 472)
-    CHROME_TOP_RIGHT = (30, 26)
+    CHROME_TOP_RIGHT = (30, 20)
     CHROME_QSS = """
         QToolButton {
             min-width: 22px; min-height: 22px;
@@ -744,10 +744,13 @@ class TownMapVariant(Variant):
             self.snapshot.roamer.species.name.upper(),
             QColor("#282830"),
         )
-        painter.setFont(pixel_font(10))
+        # Location and status share one row: same rect, same font size, both
+        # drawn with the GBA shadow so their baselines line up exactly.
+        status_row = QRectF(84, 46, 330, 18)
+        painter.setFont(pixel_font(10, bold=True))
         gba_text(
             painter,
-            QRectF(84, 44, 190, 18),
+            status_row,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             self.snapshot.roamer.location.name.upper()
             if self.snapshot.roamer.active
@@ -755,12 +758,13 @@ class TownMapVariant(Variant):
             QColor("#4870B0"),
             QColor("#C8D8F0"),
         )
-        painter.setFont(pixel_font(9, bold=True))
-        painter.setPen(self.status_color)
-        painter.drawText(
-            QRectF(200, 46, 150, 18),
+        gba_text(
+            painter,
+            status_row,
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
             f"● {self.status}",
+            self.status_color,
+            QColor("#E0E4EC"),
         )
 
         box = QRectF(16, 388, 416, 68)
