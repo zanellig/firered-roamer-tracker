@@ -1,0 +1,18 @@
+[project]
+name = "firered-suicune-tracker"
+version = "0.1.0"
+description = "Always-on-top FireRed roaming Pokémon tracker"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "PySide6>=6.8,<7",
+]
+
+[dependency-groups]
+assets = [
+    "Pillow>=10,<13",
+]
+
+[tool.uv]
+package = false
