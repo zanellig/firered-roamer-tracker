@@ -661,7 +661,7 @@ class TownMapVariant(Variant):
     KEY = "B"
     NAME = "Mapa del pueblo"
     SIZE = (448, 472)
-    CHROME_TOP_RIGHT = (30, 20)
+    PLATE = QRectF(16, 16, 416, 56)
     CHROME_QSS = """
         QToolButton {
             min-width: 22px; min-height: 22px;
@@ -683,6 +683,17 @@ class TownMapVariant(Variant):
         self._caret_timer = QTimer(self)
         self._caret_timer.timeout.connect(self._blink)
         self._caret_timer.start(450)
+
+    def place_chrome(self) -> None:
+        """Centre the buttons in the plate and leave room for the status."""
+        right = int(self.PLATE.right()) - 12
+        middle = int(self.PLATE.center().y())
+        for button in (self.close_button, self.pin):
+            size = button.sizeHint()
+            right -= size.width()
+            button.move(right, middle - size.height() // 2)
+            right -= self.CHROME_SPACING
+        self._status_right = right
 
     def build_map(self) -> StyledMap:
         widget = TownMapWidget(self, size=MAP_2X)
@@ -733,8 +744,7 @@ class TownMapVariant(Variant):
         painter.setPen(QPen(QColor("#0C1828"), 2))
         painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 10, 10)
 
-        plate = QRectF(16, 16, 416, 56)
-        message_box(painter, plate)
+        message_box(painter, self.PLATE)
         painter.drawPixmap(26, 20, self.sprite(48))
         painter.setFont(pixel_font(15, bold=True))
         gba_text(
@@ -744,13 +754,10 @@ class TownMapVariant(Variant):
             self.snapshot.roamer.species.name.upper(),
             QColor("#282830"),
         )
-        # Location and status share one row: same rect, same font size, both
-        # drawn with the GBA shadow so their baselines line up exactly.
-        status_row = QRectF(84, 46, 330, 18)
         painter.setFont(pixel_font(10, bold=True))
         gba_text(
             painter,
-            status_row,
+            QRectF(84, 46, 190, 18),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             self.snapshot.roamer.location.name.upper()
             if self.snapshot.roamer.active
@@ -758,9 +765,11 @@ class TownMapVariant(Variant):
             QColor("#4870B0"),
             QColor("#C8D8F0"),
         )
+        # Same row as the buttons, ending where place_chrome() left off.
+        middle = self.PLATE.center().y()
         gba_text(
             painter,
-            status_row,
+            QRectF(200, middle - 9, self._status_right - 212, 18),
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
             f"● {self.status}",
             self.status_color,
