@@ -1,0 +1,173 @@
+"""Desktop tracker behavior tests."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+import unittest
+
+
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
+from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+
+from roamer_tracker import DragBar, TrackerWindow  # noqa: E402
+from tracker import (  # noqa: E402
+    ENTEI,
+    RAIKOU,
+    SUICUNE,
+    Roamer,
+    TrackerSnapshot,
+    location_for,
+)
+
+
+class FakeWindowHandle:
+    def __init__(self) -> None:
+        self.system_move_calls = 0
+
+    def startSystemMove(self) -> bool:
+        self.system_move_calls += 1
+        return True
+
+
+class FakePinController:
+    def __init__(self) -> None:
+        self.toggle_calls = 0
+
+    def toggle(self) -> bool:
+        self.toggle_calls += 1
+        return True
+
+
+class DragBarTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_mouse_press_delegates_drag_to_window_system(self) -> None:
+        window = QWidget()
+        window.resize(200, 100)
+        bar = DragBar(window)
+        bar.resize(200, 40)
+        window.show()
+        self.app.processEvents()
+
+        handle = FakeWindowHandle()
+        window.windowHandle = lambda: handle
+        QTest.mousePress(bar, Qt.MouseButton.LeftButton, pos=bar.rect().center())
+        QTest.mouseRelease(bar, Qt.MouseButton.LeftButton, pos=bar.rect().center())
+        window.close()
+
+        self.assertEqual(handle.system_move_calls, 1)
+
+
+class PinButtonTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_native_controller_handles_initial_pin_and_button_toggle(self) -> None:
+        controller = FakePinController()
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=controller,
+        )
+        window.show()
+        QTest.qWait(20)
+
+        self.assertEqual(controller.toggle_calls, 1)
+        QTest.mouseClick(window.pin_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(controller.toggle_calls, 2)
+        self.assertTrue(window.isVisible())
+        window.close()
+
+
+class TrackerWindowDisplayTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def snapshot(species, *, active: bool = True) -> TrackerSnapshot:
+        location = location_for(3, 27)
+        return TrackerSnapshot(
+            roamer=Roamer(species, location, active),
+            player=location_for(3, 26),
+            same_area=False,
+        )
+
+    def test_updates_name_sprite_and_title_for_each_roamer(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+
+        for species in (RAIKOU, ENTEI, SUICUNE):
+            with self.subTest(species=species.name):
+                window.show_snapshot(self.snapshot(species))
+                self.assertEqual(window.roamer_heading.text(), species.name.upper())
+                self.assertEqual(window.roamer_legend_label.text(), species.name.upper())
+                self.assertEqual(window.windowTitle(), f"Rastreador de {species.name}")
+                self.assertFalse(window.roamer_sprite.pixmap().isNull())
+
+        window.close()
+
+    def test_shows_inactive_roamer_without_a_false_match(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+        window.show_snapshot(self.snapshot(ENTEI, active=False))
+
+        self.assertEqual(window.roamer_location.text(), "INACTIVO")
+        self.assertEqual(window.match_text.text(), "El roamer no está activo")
+        self.assertFalse(window.match_banner.property("matched"))
+        window.close()
+
+
+@unittest.skipIf(os.name == "nt", "POSIX SIGINT subprocess behavior")
+class InterruptTests(unittest.TestCase):
+    def test_sigint_exits_without_traceback(self) -> None:
+        environment = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+        process = subprocess.Popen(
+            [sys.executable, str(ROOT / "roamer_tracker.py")],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
+        )
+        try:
+            time.sleep(0.8)
+            process.send_signal(signal.SIGINT)
+            _stdout, stderr = process.communicate(timeout=3)
+        except BaseException:
+            process.kill()
+            process.communicate()
+            raise
+
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("KeyboardInterrupt", stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

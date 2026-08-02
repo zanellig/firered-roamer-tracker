@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,12 +14,13 @@ OUTPUT = ROOT / "assets"
 
 def build_assets(source: Path) -> None:
     region = source / "graphics" / "region_map"
-    pokemon = source / "graphics" / "pokemon" / "suicune"
     tiles_path = region / "region_map.png"
     tilemap_path = region / "kanto.bin"
-    suicune_path = pokemon / "front.png"
-    icon_path = pokemon / "icon.png"
-    for path in (tiles_path, tilemap_path, suicune_path, icon_path):
+    sprite_paths = {
+        name: source / "graphics" / "pokemon" / name / "front.png"
+        for name in ("raikou", "entei", "suicune")
+    }
+    for path in (tiles_path, tilemap_path, *sprite_paths.values()):
         if not path.is_file():
             raise ValueError(f"No se encontró el recurso requerido: {path.name}")
 
@@ -43,10 +44,22 @@ def build_assets(source: Path) -> None:
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     map_image.save(OUTPUT / "kanto_map.png", optimize=True)
-    Image.open(suicune_path).save(OUTPUT / "suicune.png", optimize=True)
-    Image.open(icon_path).crop((0, 0, 32, 32)).save(
-        OUTPUT / "app_icon.png", optimize=True
+    for name, path in sprite_paths.items():
+        Image.open(path).save(OUTPUT / f"{name}.png", optimize=True)
+
+    icon = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(icon)
+    draw.rounded_rectangle(
+        (1, 1, 30, 30),
+        radius=7,
+        fill="#172640",
+        outline="#304260",
+        width=2,
     )
+    draw.ellipse((6, 6, 25, 25), fill="#e2554d", outline="#fff9e8", width=2)
+    draw.line((12, 22, 12, 11, 18, 11, 21, 14, 18, 17, 12, 17), fill="#fff9e8", width=3)
+    draw.line((17, 17, 22, 22), fill="#fff9e8", width=3)
+    icon.save(OUTPUT / "app_icon.png", optimize=True)
 
 
 def main() -> int:

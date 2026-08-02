@@ -1,8 +1,13 @@
-# Rastreador flotante de Suicune
+# Rastreador flotante de roamers
 
 Una ventana de escritorio siempre visible que lee la RAM de Pokémon FireRed a
-través de RetroArch y marca en el mapa de Kanto dónde están Suicune y el
-jugador. Es de solo lectura: no modifica la RAM ni la partida.
+través de RetroArch y marca en el mapa de Kanto dónde están el Pokémon errante
+y el jugador. Es de solo lectura: no modifica la RAM ni la partida.
+
+La especie se detecta automáticamente en cada save. FireRed elige el roamer
+según el starter: Bulbasaur corresponde a Entei, Squirtle a Raikou y Charmander
+a Suicune. Si la partida ya creó al roamer, el rastreador usa directamente la
+especie guardada; por eso también funciona con saves intercambiados o editados.
 
 ## Ejecutar
 
@@ -13,7 +18,7 @@ jugador. Es de solo lectura: no modifica la RAM ni la partida.
    ```bash
    cd roamer_watcher
    uv sync
-   uv run python suicune_tracker.py
+   uv run python roamer_tracker.py
    ```
 
 La ventana se puede arrastrar desde la barra superior y queda sobre las demás
@@ -26,13 +31,13 @@ La dirección predeterminada es `127.0.0.1:55355`. Se puede cambiar junto con la
 frecuencia de lectura:
 
 ```bash
-uv run python suicune_tracker.py --host 127.0.0.1 --port 55355 --interval 0.20
+uv run python roamer_tracker.py --host 127.0.0.1 --port 55355 --interval 0.20
 ```
 
 Para seguir usando la vista de terminal:
 
 ```bash
-uv run python suicune_ram_watch.py
+uv run python roamer_ram_watch.py
 ```
 
 ## Dependencias
@@ -50,11 +55,12 @@ ejecutar el rastreador y vive en el grupo opcional `assets`.
 
 ## Recursos de FireRed
 
-`assets/kanto_map.png`, `assets/suicune.png` y `assets/app_icon.png` se generan
-desde el decompilado de [pret/pokefirered](https://github.com/pret/pokefirered).
-El mapa se reconstruye con el tileset original y `kanto.bin`; las posiciones de
+`assets/kanto_map.png` y los sprites de Raikou, Entei y Suicune se generan desde
+el decompilado de [pret/pokefirered](https://github.com/pret/pokefirered). El
+mapa se reconstruye con el tileset original y `kanto.bin`; las posiciones de
 las rutas usan las coordenadas de `region_map_sections.json` y la misma fórmula
-de cursor de `src/region_map.c`.
+de cursor de `src/region_map.c`. El ícono genérico de la aplicación también se
+genera localmente, pero no usa gráficos del juego.
 
 Para regenerarlos desde un checkout local:
 
@@ -67,7 +73,9 @@ Los recursos pertenecen a sus titulares originales y se incluyen para este
 proyecto personal y no comercial.
 
 Las direcciones de RAM conservan el alcance del script original: FireRed
-USA/Europe Rev 1 (BPRE) con el core mGBA.
+USA/Europe Rev 1 (BPRE) con el core mGBA. La ubicación se lee del estado vivo
+del juego; la especie y su estado activo se leen del bloque de guardado que esté
+cargado en ese momento.
 
 ## Probar
 

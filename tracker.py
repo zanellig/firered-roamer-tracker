@@ -1,4 +1,4 @@
-"""Authoritative FireRed RAM-reading and location model for tracker frontends."""
+"""Authoritative FireRed RAM-reading and roamer model for tracker frontends."""
 
 from __future__ import annotations
 
@@ -10,6 +10,10 @@ from typing import Callable, Protocol
 
 ROAMER_ADDR = 0x0203F3AE
 SAVE_BLOCK1_PTR_ADDR = 0x03005008
+PLAYER_LOCATION_OFFSET = 0x0004
+STARTER_VAR_OFFSET = 0x1062
+ROAMER_SPECIES_OFFSET = 0x30D8
+ROAMER_ACTIVE_OFFSET = 0x30E3
 EWRAM_START = 0x02000000
 EWRAM_END = 0x02040000
 
@@ -44,8 +48,38 @@ class Location:
 
 
 @dataclass(frozen=True)
+class RoamerSpecies:
+    id: int
+    name: str
+
+
+RAIKOU = RoamerSpecies(243, "Raikou")
+ENTEI = RoamerSpecies(244, "Entei")
+SUICUNE = RoamerSpecies(245, "Suicune")
+
+ROAMER_SPECIES = {
+    species.id: species
+    for species in (RAIKOU, ENTEI, SUICUNE)
+}
+
+# FireRed stores VAR_STARTER_MON as an index, not a species ID.
+ROAMER_BY_STARTER = {
+    0: ENTEI,    # Bulbasaur
+    1: RAIKOU,   # Squirtle
+    2: SUICUNE,  # Charmander
+}
+
+
+@dataclass(frozen=True)
+class Roamer:
+    species: RoamerSpecies
+    location: Location
+    active: bool
+
+
+@dataclass(frozen=True)
 class TrackerSnapshot:
-    suicune: Location
+    roamer: Roamer
     player: Location
     same_area: bool
 
@@ -210,19 +244,44 @@ class RetroArchNCI:
 
 def read_snapshot(reader: MemoryReader) -> TrackerSnapshot:
     """Read one coherent-enough tracker update through the public memory seam."""
-    roamer = reader.read_memory(ROAMER_ADDR, 2)
     save_block1_ptr = u32le(reader.read_memory(SAVE_BLOCK1_PTR_ADDR, 4))
-    if not EWRAM_START <= save_block1_ptr <= EWRAM_END - 6:
+    if not EWRAM_START <= save_block1_ptr <= EWRAM_END - ROAMER_ACTIVE_OFFSET - 1:
         raise TrackerError("El bloque de guardado activo no está disponible")
-    player = reader.read_memory(save_block1_ptr + 4, 2)
 
-    suicune = location_for(roamer[0], roamer[1])
+    player = reader.read_memory(save_block1_ptr + PLAYER_LOCATION_OFFSET, 2)
+    roamer_state = reader.read_memory(
+        save_block1_ptr + ROAMER_SPECIES_OFFSET,
+        ROAMER_ACTIVE_OFFSET - ROAMER_SPECIES_OFFSET + 1,
+    )
+    species_id = int.from_bytes(roamer_state[:2], "little")
+    species = ROAMER_SPECIES.get(species_id)
+    if species is None:
+        starter_id = int.from_bytes(
+            reader.read_memory(save_block1_ptr + STARTER_VAR_OFFSET, 2),
+            "little",
+        )
+        species = ROAMER_BY_STARTER.get(starter_id)
+    if species is None:
+        raise TrackerError("No se pudo identificar el roamer de esta partida")
+
+    active_value = roamer_state[ROAMER_ACTIVE_OFFSET - ROAMER_SPECIES_OFFSET]
+    if active_value not in (0, 1):
+        raise TrackerError("El estado del roamer no es válido")
+
+    roamer_map = reader.read_memory(ROAMER_ADDR, 2)
+    roamer_location = location_for(roamer_map[0], roamer_map[1])
     current = location_for(player[0], player[1])
+    roamer = Roamer(
+        species=species,
+        location=roamer_location,
+        active=bool(active_value),
+    )
     return TrackerSnapshot(
-        suicune=suicune,
+        roamer=roamer,
         player=current,
         same_area=(
-            suicune.group == current.group == 3
-            and suicune.number == current.number
+            roamer.active
+            and roamer.location.group == current.group == 3
+            and roamer.location.number == current.number
         ),
     )

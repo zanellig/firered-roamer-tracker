@@ -1,4 +1,4 @@
-"""CLI view of the shared FireRed live roamer tracker."""
+"""Terminal view of the shared FireRed live roamer tracker."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ else:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Muestra la ubicación de Suicune leyendo la RAM de RetroArch."
+        description="Muestra la ubicación del roamer leyendo la RAM de RetroArch."
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=55355)
@@ -31,8 +31,14 @@ def main() -> int:
                     if snapshot.same_area
                     else ""
                 )
+                roamer_location = (
+                    snapshot.roamer.location.name
+                    if snapshot.roamer.active
+                    else "INACTIVO"
+                )
                 line = (
-                    f"Suicune: {snapshot.suicune.name:<18} | "
+                    f"{snapshot.roamer.species.name}: "
+                    f"{roamer_location:<18} | "
                     f"Vos: {snapshot.player.name:<18}{alert}"
                 )
                 print("\r" + line.ljust(100), end="", flush=True)
