@@ -108,8 +108,18 @@ class KWinPinController:
         return cls(interface)
 
     def toggle(self) -> bool:
+        shortcuts_reply = self.interface.call("shortcutNames")
+        if shortcuts_reply.type() != QDBusMessage.MessageType.ReplyMessage:
+            return False
+        arguments = shortcuts_reply.arguments()
+        if (
+            len(arguments) != 1
+            or not isinstance(arguments[0], list)
+            or self.SHORTCUT not in arguments[0]
+        ):
+            return False
         reply = self.interface.call("invokeShortcut", self.SHORTCUT)
-        return reply.type() != QDBusMessage.MessageType.ErrorMessage
+        return reply.type() == QDBusMessage.MessageType.ReplyMessage
 
 
 class _AutoPinController:

@@ -16,10 +16,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtDBus import QDBusMessage  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
-from roamer_tracker import DragBar, TrackerWindow  # noqa: E402
+from roamer_tracker import DragBar, KWinPinController, TrackerWindow  # noqa: E402
 from tracker import (  # noqa: E402
     ENTEI,
     RAIKOU,
@@ -49,6 +50,32 @@ class FakePinController:
         return True
 
 
+class FakeDBusReply:
+    def __init__(
+        self,
+        message_type: QDBusMessage.MessageType,
+        arguments: list[object] | None = None,
+    ) -> None:
+        self.message_type = message_type
+        self.reply_arguments = arguments or []
+
+    def type(self) -> QDBusMessage.MessageType:
+        return self.message_type
+
+    def arguments(self) -> list[object]:
+        return self.reply_arguments
+
+
+class FakeDBusInterface:
+    def __init__(self, replies: list[FakeDBusReply]) -> None:
+        self.replies = replies
+        self.calls: list[tuple[object, ...]] = []
+
+    def call(self, *arguments: object) -> FakeDBusReply:
+        self.calls.append(arguments)
+        return self.replies.pop(0)
+
+
 class DragBarTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -69,6 +96,69 @@ class DragBarTests(unittest.TestCase):
         window.close()
 
         self.assertEqual(handle.system_move_calls, 1)
+
+
+class KWinPinControllerTests(unittest.TestCase):
+    @staticmethod
+    def reply(arguments: list[object] | None = None) -> FakeDBusReply:
+        return FakeDBusReply(
+            QDBusMessage.MessageType.ReplyMessage,
+            arguments,
+        )
+
+    def test_invokes_an_available_kwin_shortcut(self) -> None:
+        interface = FakeDBusInterface(
+            [
+                self.reply([[KWinPinController.SHORTCUT, "Window Close"]]),
+                self.reply(),
+            ]
+        )
+        controller = KWinPinController(interface)
+
+        self.assertTrue(controller.toggle())
+        self.assertEqual(
+            interface.calls,
+            [
+                ("shortcutNames",),
+                ("invokeShortcut", KWinPinController.SHORTCUT),
+            ],
+        )
+
+    def test_returns_false_when_the_shortcut_is_missing(self) -> None:
+        interface = FakeDBusInterface(
+            [self.reply([["Window Close"]])]
+        )
+        controller = KWinPinController(interface)
+
+        self.assertFalse(controller.toggle())
+        self.assertEqual(interface.calls, [("shortcutNames",)])
+
+    def test_returns_false_when_the_shortcut_query_fails(self) -> None:
+        interface = FakeDBusInterface(
+            [FakeDBusReply(QDBusMessage.MessageType.ErrorMessage)]
+        )
+        controller = KWinPinController(interface)
+
+        self.assertFalse(controller.toggle())
+        self.assertEqual(interface.calls, [("shortcutNames",)])
+
+    def test_returns_false_when_the_shortcut_invocation_fails(self) -> None:
+        interface = FakeDBusInterface(
+            [
+                self.reply([[KWinPinController.SHORTCUT]]),
+                FakeDBusReply(QDBusMessage.MessageType.ErrorMessage),
+            ]
+        )
+        controller = KWinPinController(interface)
+
+        self.assertFalse(controller.toggle())
+        self.assertEqual(
+            interface.calls,
+            [
+                ("shortcutNames",),
+                ("invokeShortcut", KWinPinController.SHORTCUT),
+            ],
+        )
 
 
 class PinButtonTests(unittest.TestCase):
