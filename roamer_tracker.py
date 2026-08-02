@@ -9,7 +9,17 @@ import signal
 from threading import Event
 from typing import Protocol
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+)
 from PySide6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage
 from PySide6.QtGui import (
     QColor,
@@ -21,6 +31,7 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
     QPixmap,
+    QPolygonF,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -77,6 +88,27 @@ WHITE = QColor("#fff9e8")
 
 def _format_probability(probability: float) -> str:
     return f"{probability:.1%}".replace(".", ",")
+
+
+def _pin_pixmap(color: QColor) -> QPixmap:
+    """Draw a pushpin at 4x the icon size so it stays crisp when scaled."""
+    pixmap = QPixmap(60, 60)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawEllipse(QPointF(30, 21), 18, 18)
+    painter.drawPolygon(QPolygonF([QPointF(21, 33), QPointF(39, 33), QPointF(30, 58)]))
+    painter.end()
+    return pixmap
+
+
+def _pin_icon() -> QIcon:
+    icon = QIcon()
+    icon.addPixmap(_pin_pixmap(NAVY), QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(_pin_pixmap(QColor("#9aabc1")), QIcon.Mode.Normal, QIcon.State.Off)
+    return icon
 
 
 class PinController(Protocol):
@@ -462,7 +494,8 @@ class TrackerWindow(QWidget):
 
         self.pin_button = QToolButton()
         self.pin_button.setObjectName("pinButton")
-        self.pin_button.setText("FIJO")
+        self.pin_button.setIcon(_pin_icon())
+        self.pin_button.setIconSize(QSize(15, 15))
         self.pin_button.setCheckable(True)
         self.pin_button.setChecked(True)
         self.pin_button.setToolTip("Mantener siempre visible")
@@ -676,9 +709,6 @@ class TrackerWindow(QWidget):
             QToolButton:hover {{ background: #263a5b; color: #fff9e8; }}
             QToolButton#closeButton:hover {{ background: #e2554d; }}
             QToolButton#pinButton {{
-                min-width: 43px;
-                font-size: 9px;
-                font-weight: 700;
                 border: 1px solid #3a5478;
             }}
             QToolButton#pinButton:checked {{

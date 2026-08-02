@@ -23,7 +23,7 @@ edited saves.
    ```
 
 The window can be dragged from the top bar and stays above the others by
-default. The **FIJO** button turns that behavior off. If the game is not open
+default. The pin button in the title bar turns that behavior off. If the game is not open
 yet or the connection drops, the tracker keeps retrying instead of exiting.
 `Ctrl+C` from the terminal closes the window and the RAM reader without
 printing a traceback. The **×** button also closes the application completely

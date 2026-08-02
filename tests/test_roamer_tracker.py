@@ -180,6 +180,7 @@ class PinButtonTests(unittest.TestCase):
         QTest.qWait(20)
 
         self.assertEqual(controller.toggle_calls, 1)
+        self.assertFalse(window.pin_button.icon().isNull())
         QTest.mouseClick(window.pin_button, Qt.MouseButton.LeftButton)
         self.assertEqual(controller.toggle_calls, 2)
         self.assertTrue(window.isVisible())
