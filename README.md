@@ -1,19 +1,20 @@
-# Rastreador flotante de roamers
+# Floating roamer tracker
 
-Una ventana de escritorio siempre visible que lee la RAM de Pokémon FireRed a
-través de RetroArch y marca en el mapa de Kanto dónde están el Pokémon errante
-y el jugador. Es de solo lectura: no modifica la RAM ni la partida.
+An always-on-top desktop window that reads Pokémon FireRed RAM through
+RetroArch and marks on the Kanto map where the roaming Pokémon and the player
+are. It is read-only: it never modifies RAM or the save file.
 
-La especie se detecta automáticamente en cada save. FireRed elige el roamer
-según el starter: Bulbasaur corresponde a Entei, Squirtle a Raikou y Charmander
-a Suicune. Si la partida ya creó al roamer, el rastreador usa directamente la
-especie guardada; por eso también funciona con saves intercambiados o editados.
+The species is detected automatically for each save. FireRed picks the roamer
+based on the starter: Bulbasaur maps to Entei, Squirtle to Raikou and
+Charmander to Suicune. If the save has already created the roamer, the tracker
+uses the stored species directly; that is why it also works with swapped or
+edited saves.
 
-## Ejecutar
+## Running
 
-1. En RetroArch, activá **Settings > Network > Network Commands**.
-2. Abrí FireRed con el core mGBA.
-3. Creá el entorno virtual local e iniciá la aplicación:
+1. In RetroArch, enable **Settings > Network > Network Commands**.
+2. Open FireRed with the mGBA core.
+3. Create the local virtual environment and start the application:
 
    ```bash
    cd roamer_watcher
@@ -21,95 +22,96 @@ especie guardada; por eso también funciona con saves intercambiados o editados.
    uv run python roamer_tracker.py
    ```
 
-La ventana se puede arrastrar desde la barra superior y queda sobre las demás
-por defecto. El botón **FIJO** permite desactivar ese comportamiento. Si el
-juego todavía no está abierto o se corta la conexión, el rastreador sigue
-intentando conectarse sin cerrarse. `Ctrl+C` desde la terminal cierra la
-ventana y el lector de RAM sin mostrar un traceback. El botón **×** también
-cierra por completo la aplicación y detiene el lector.
+The window can be dragged from the top bar and stays above the others by
+default. The **FIJO** button turns that behavior off. If the game is not open
+yet or the connection drops, the tracker keeps retrying instead of exiting.
+`Ctrl+C` from the terminal closes the window and the RAM reader without
+printing a traceback. The **×** button also closes the application completely
+and stops the reader.
 
-## Pronóstico de movimiento
+## Movement forecast
 
-Cuando el jugador y el roamer están en zonas distintas, el mapa marca en dorado
-las rutas probables después de la próxima transición normal y muestra el
-porcentaje de cada una. El cálculo replica la tabla de movimiento de FireRed,
-incluido el salto aleatorio de 1 entre 16 y la ruta que el juego excluye según
-el historial reciente del jugador.
+When the player and the roamer are in different zones, the map highlights in
+gold the likely routes after the next normal transition and shows the
+percentage for each one. The calculation replicates FireRed's movement table,
+including the 1-in-16 random jump and the route the game excludes based on the
+player's recent history.
 
-Si una ruta probable tiene una entrada rápida desde la ciudad actual, la
-ventana recomienda cruzarla. En los demás casos conserva las probabilidades en
-el mapa sin recomendar Fly: volar cambia la ubicación del roamer al azar e
-invalida el pronóstico anterior.
+If a likely route has a quick entrance from the current town, the window
+recommends crossing over to it. In every other case it keeps the probabilities
+on the map without recommending Fly: flying moves the roamer to a random
+location and invalidates the previous forecast.
 
-Por ejemplo, al entrar a Viridian desde Ruta 1 con el roamer en Ruta 22, el
-movimiento normal excluye Ruta 1 y reparte sus opciones entre Ruta 2 y Ruta 23.
-Cada una queda en **47,1%** al incluir la posibilidad de 1 entre 16 de que el
-roamer salte a otra parte del mapa. La aplicación recomienda cruzar a Ruta 2,
-la salida inmediata desde Viridian.
+For example, entering Viridian from Route 1 with the roamer on Route 22, normal
+movement excludes Route 1 and splits its options between Route 2 and Route 23.
+Each one lands at **47.1%** once the 1-in-16 chance of the roamer jumping
+elsewhere on the map is included. The application recommends crossing to Route
+2, the immediate exit from Viridian.
 
-Las rutas pronosticadas usan contorno dorado y la intercepción recomendada se
-resalta con mayor intensidad. Cuando ambos comparten zona se conserva
-únicamente el aviso de coincidencia, sin una instrucción redundante.
+Forecast routes use a gold outline and the recommended interception is
+highlighted more strongly. When both share a zone, only the match notice is
+kept, without a redundant instruction.
 
-La dirección predeterminada es `127.0.0.1:55355`. Se puede cambiar junto con la
-frecuencia de lectura:
+The default address is `127.0.0.1:55355`. It can be changed along with the read
+frequency:
 
 ```bash
 uv run python roamer_tracker.py --host 127.0.0.1 --port 55355 --interval 0.20
 ```
 
-Para seguir usando la vista de terminal:
+To keep using the terminal view:
 
 ```bash
 uv run python roamer_ram_watch.py
 ```
 
-## Dependencias
+## Dependencies
 
-La aplicación usa Python 3 y PySide 6. `uv sync` crea `.venv` dentro de esta
-carpeta e instala PySide ahí; no instala paquetes en el Python global. No hace
-falta activar el entorno porque `uv run` lo selecciona automáticamente.
+The application uses Python 3 and PySide 6. `uv sync` creates `.venv` inside
+this folder and installs PySide there; it does not install packages into the
+global Python. Activating the environment is not necessary because `uv run`
+selects it automatically.
 
 ```bash
 uv sync
 ```
 
-Pillow solo se usa para regenerar los PNG incluidos. No hace falta para
-ejecutar el rastreador y vive en el grupo opcional `assets`.
+Pillow is only used to regenerate the bundled PNGs. It is not needed to run the
+tracker and lives in the optional `assets` group.
 
-## Recursos de FireRed
+## FireRed assets
 
-`assets/kanto_map.png` y los sprites de Raikou, Entei y Suicune se generan desde
-el decompilado de [pret/pokefirered](https://github.com/pret/pokefirered). El
-mapa se reconstruye con el tileset original y `kanto.bin`; las posiciones de
-las rutas usan las coordenadas de `region_map_sections.json` y la misma fórmula
-de cursor de `src/region_map.c`. El ícono genérico de la aplicación también se
-genera localmente, pero no usa gráficos del juego.
+`assets/kanto_map.png` and the Raikou, Entei and Suicune sprites are generated
+from the [pret/pokefirered](https://github.com/pret/pokefirered) decompilation.
+The map is rebuilt with the original tileset and `kanto.bin`; the route
+positions use the coordinates from `region_map_sections.json` and the same
+cursor formula as `src/region_map.c`. The generic application icon is also
+generated locally, but it does not use game graphics.
 
-Para regenerarlos desde un checkout local:
+To regenerate them from a local checkout:
 
 ```bash
 uv sync --group assets
-uv run --group assets python tools/build_assets.py /ruta/a/pokefirered
+uv run --group assets python tools/build_assets.py /path/to/pokefirered
 ```
 
-Los recursos pertenecen a sus titulares originales y se incluyen para este
-proyecto personal y no comercial.
+The assets belong to their original owners and are included for this personal,
+non-commercial project.
 
-Las direcciones de RAM conservan el alcance del script original: FireRed
-USA/Europe Rev 1 (BPRE) con el core mGBA. La ubicación se lee del estado vivo
-del juego; la especie y su estado activo se leen del bloque de guardado que esté
-cargado en ese momento. El pronóstico también lee el historial vivo de las tres
-últimas ubicaciones usado por el propio juego.
+The RAM addresses keep the scope of the original script: FireRed USA/Europe Rev
+1 (BPRE) with the mGBA core. The location is read from the game's live state;
+the species and its active flag are read from whichever save block is loaded at
+that moment. The forecast also reads the live history of the last three
+locations used by the game itself.
 
-## Probar
+## Testing
 
 ```bash
 uv run python -m unittest discover -s tests -v
 ```
 
-## Licencia
+## License
 
-El código del rastreador se publica bajo la [licencia MIT](LICENSE). Los
-recursos gráficos generados desde FireRed no están cubiertos por esa licencia;
-consultá [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The tracker code is released under the [MIT license](LICENSE). The graphical
+assets generated from FireRed are not covered by that license; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
