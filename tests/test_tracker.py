@@ -11,8 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tracker import (  # noqa: E402
     ENTEI,
     KANTO_MAP_BOUNDS,
+    LOCATION_HISTORY_ADDR,
     PLAYER_LOCATION_OFFSET,
     RAIKOU,
+    ROAMER_ROUTE_MAPS,
     ROAMER_ADDR,
     ROAMER_ACTIVE_OFFSET,
     ROAMER_SPECIES_OFFSET,
@@ -21,6 +23,7 @@ from tracker import (  # noqa: E402
     SUICUNE,
     RetroArchNCI,
     TrackerError,
+    forecast_movement,
     location_for,
     read_snapshot,
 )
@@ -68,6 +71,83 @@ class LocationTests(unittest.TestCase):
         self.assertEqual(area.name, "Grupo 4 / mapa 7")
         self.assertIsNone(area.map_bounds)
 
+    def test_route_names_account_for_both_route_21_maps(self) -> None:
+        self.assertEqual(location_for(3, 39).name, "Ruta 21")
+        self.assertEqual(location_for(3, 40).name, "Ruta 21")
+        self.assertEqual(location_for(3, 41).name, "Ruta 22")
+        self.assertEqual(location_for(3, 44).name, "Ruta 25")
+
+
+class MovementForecastTests(unittest.TestCase):
+    def test_splits_normal_movement_between_route_neighbors(self) -> None:
+        forecast = forecast_movement(
+            location_for(3, 34),  # Route 16
+            location_for(3, 1),
+            location_for(3, 20),
+        )
+
+        self.assertIsNotNone(forecast)
+        self.assertEqual(
+            [chance.location.name for chance in forecast.likely_routes],
+            ["Ruta 7", "Ruta 17"],
+        )
+        for chance in forecast.likely_routes:
+            self.assertAlmostEqual(chance.probability, 181 / 384)
+        random_only_routes = len(ROAMER_ROUTE_MAPS) - 1 - len(
+            forecast.likely_routes
+        )
+        represented_probability = sum(
+            chance.probability for chance in forecast.likely_routes
+        ) + random_only_routes * forecast.random_route_probability
+        self.assertAlmostEqual(represented_probability, 1.0)
+
+    def test_excludes_the_player_map_from_two_transitions_ago(self) -> None:
+        forecast = forecast_movement(
+            location_for(3, 34),  # Route 16
+            location_for(3, 1),
+            location_for(3, 25),  # Route 7
+        )
+
+        self.assertEqual(len(forecast.likely_routes), 1)
+        self.assertEqual(forecast.likely_routes[0].location.name, "Ruta 17")
+        self.assertAlmostEqual(forecast.likely_routes[0].probability, 361 / 384)
+
+    def test_recommends_an_immediate_cross_from_a_matching_hunt_city(self) -> None:
+        forecast = forecast_movement(
+            location_for(3, 23),  # Route 5 can move to Route 6.
+            location_for(3, 5),   # Vermilion City
+            location_for(3, 19),
+        )
+
+        self.assertIsNotNone(forecast.recommendation)
+        self.assertEqual(forecast.recommendation.route.name, "Ruta 6")
+        self.assertGreater(forecast.recommendation.probability, 0)
+
+    def test_does_not_recommend_a_reset_when_no_direct_cross_exists(self) -> None:
+        forecast = forecast_movement(
+            location_for(3, 34),
+            location_for(3, 7),
+            location_for(3, 20),
+        )
+
+        self.assertIsNone(forecast.recommendation)
+
+    def test_viridian_interception_accounts_for_the_random_hop(self) -> None:
+        forecast = forecast_movement(
+            location_for(3, 41),  # Route 22
+            location_for(3, 1),   # Viridian City
+            location_for(3, 19),  # Entered Viridian from Route 1
+        )
+
+        self.assertEqual(
+            [chance.location.name for chance in forecast.likely_routes],
+            ["Ruta 2", "Ruta 23"],
+        )
+        for chance in forecast.likely_routes:
+            self.assertAlmostEqual(chance.probability, 181 / 384)
+        self.assertEqual(forecast.recommendation.route.name, "Ruta 2")
+        self.assertAlmostEqual(forecast.recommendation.probability, 181 / 384)
+
 
 class SnapshotTests(unittest.TestCase):
     @staticmethod
@@ -86,6 +166,11 @@ class SnapshotTests(unittest.TestCase):
         starter_id: int | None = None,
         roamer_map: tuple[int, int] = (3, 27),
         player_map: tuple[int, int] = (3, 27),
+        location_history: tuple[tuple[int, int], ...] = (
+            (3, 20),
+            (3, 1),
+            (3, 20),
+        ),
     ) -> dict[tuple[int, int], bytes]:
         values = {
             (SAVE_BLOCK1_PTR_ADDR, 4): save_block.to_bytes(4, "little"),
@@ -94,7 +179,11 @@ class SnapshotTests(unittest.TestCase):
                 save_block + ROAMER_SPECIES_OFFSET,
                 ROAMER_ACTIVE_OFFSET - ROAMER_SPECIES_OFFSET + 1,
             ): self.roamer_state(species_id, active),
-            (ROAMER_ADDR, 2): bytes(roamer_map),
+            (LOCATION_HISTORY_ADDR, 8): bytes(
+                value
+                for location in (*location_history, roamer_map)
+                for value in location
+            ),
         }
         if starter_id is not None:
             values[(save_block + STARTER_VAR_OFFSET, 2)] = starter_id.to_bytes(
@@ -110,6 +199,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertTrue(snapshot.roamer.active)
         self.assertEqual(snapshot.player.name, "Ruta 9")
         self.assertTrue(snapshot.same_area)
+        self.assertIsNotNone(snapshot.forecast)
 
     def test_detects_each_roamer_from_the_saved_species(self) -> None:
         for species in (RAIKOU, ENTEI, SUICUNE):
@@ -144,6 +234,23 @@ class SnapshotTests(unittest.TestCase):
             self.values_for(roamer_map=(4, 27), player_map=(4, 27))
         )
         self.assertFalse(read_snapshot(reader).same_area)
+
+    def test_reads_game_history_to_exclude_a_likely_route(self) -> None:
+        reader = FakeReader(
+            self.values_for(
+                roamer_map=(3, 34),
+                player_map=(3, 1),
+                location_history=((3, 1), (3, 25), (3, 20)),
+            )
+        )
+
+        snapshot = read_snapshot(reader)
+
+        self.assertEqual(
+            [chance.location.name for chance in snapshot.forecast.likely_routes],
+            ["Ruta 17"],
+        )
+        self.assertIn((LOCATION_HISTORY_ADDR, 8), reader.reads)
 
     def test_inactive_roamer_does_not_match_the_player(self) -> None:
         reader = FakeReader(self.values_for(active=0))

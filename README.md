@@ -27,6 +27,29 @@ juego todavía no está abierto o se corta la conexión, el rastreador sigue
 intentando conectarse sin cerrarse. `Ctrl+C` desde la terminal cierra la
 ventana y el lector de RAM sin mostrar un traceback.
 
+## Pronóstico de movimiento
+
+Cuando el jugador y el roamer están en zonas distintas, el mapa marca en dorado
+las rutas probables después de la próxima transición normal y muestra el
+porcentaje de cada una. El cálculo replica la tabla de movimiento de FireRed,
+incluido el salto aleatorio de 1 entre 16 y la ruta que el juego excluye según
+el historial reciente del jugador.
+
+Si una ruta probable tiene una entrada rápida desde la ciudad actual, la
+ventana recomienda cruzarla. En los demás casos conserva las probabilidades en
+el mapa sin recomendar Fly: volar cambia la ubicación del roamer al azar e
+invalida el pronóstico anterior.
+
+Por ejemplo, al entrar a Viridian desde Ruta 1 con el roamer en Ruta 22, el
+movimiento normal excluye Ruta 1 y reparte sus opciones entre Ruta 2 y Ruta 23.
+Cada una queda en **47,1%** al incluir la posibilidad de 1 entre 16 de que el
+roamer salte a otra parte del mapa. La aplicación recomienda cruzar a Ruta 2,
+la salida inmediata desde Viridian.
+
+Las rutas pronosticadas usan contorno dorado y la intercepción recomendada se
+resalta con mayor intensidad. Cuando ambos comparten zona se conserva
+únicamente el aviso de coincidencia, sin una instrucción redundante.
+
 La dirección predeterminada es `127.0.0.1:55355`. Se puede cambiar junto con la
 frecuencia de lectura:
 
@@ -75,7 +98,8 @@ proyecto personal y no comercial.
 Las direcciones de RAM conservan el alcance del script original: FireRed
 USA/Europe Rev 1 (BPRE) con el core mGBA. La ubicación se lee del estado vivo
 del juego; la especie y su estado activo se leen del bloque de guardado que esté
-cargado en ese momento.
+cargado en ese momento. El pronóstico también lee el historial vivo de las tres
+últimas ubicaciones usado por el propio juego.
 
 ## Probar
 

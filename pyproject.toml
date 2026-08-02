@@ -1,6 +1,6 @@
 [project]
 name = "firered-roamer-tracker"
-version = "0.2.0"
+version = "0.3.0"
 description = "Always-on-top FireRed roaming Pokémon tracker"
 readme = "README.md"
 license = "MIT"

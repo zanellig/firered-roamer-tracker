@@ -9,7 +9,7 @@ import signal
 from threading import Event
 from typing import Protocol
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, QThread, QTimer, Signal
 from PySide6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage
 from PySide6.QtGui import (
     QColor,
@@ -73,6 +73,10 @@ CYAN = QColor("#49b8d0")
 CORAL = QColor("#e2554d")
 GOLD = QColor("#f1c84b")
 WHITE = QColor("#fff9e8")
+
+
+def _format_probability(probability: float) -> str:
+    return f"{probability:.1%}".replace(".", ",")
 
 
 class PinController(Protocol):
@@ -229,6 +233,12 @@ class KantoMap(QWidget):
         )
 
         if self._snapshot is not None:
+            if (
+                self._snapshot.roamer.active
+                and not self._snapshot.same_area
+                and self._snapshot.forecast is not None
+            ):
+                self._draw_forecast(painter, self._snapshot)
             player = self._point(self._snapshot.player)
             roamer = self._point(self._snapshot.roamer.location)
             marker = self._snapshot.roamer.species.name[0]
@@ -246,6 +256,87 @@ class KantoMap(QWidget):
 
     def _scaled(self, point: tuple[float, float]) -> tuple[float, float]:
         return point[0] * self.width() / 240, point[1] * self.height() / 160
+
+    def _route_rect(self, location: Location) -> QRectF | None:
+        bounds = location.map_bounds
+        if bounds is None:
+            return None
+        scale_x = self.width() / 240
+        scale_y = self.height() / 160
+        return QRectF(
+            (8 * bounds.x + 32) * scale_x,
+            (8 * bounds.y + 32) * scale_y,
+            8 * bounds.width * scale_x,
+            8 * bounds.height * scale_y,
+        )
+
+    def _draw_forecast(self, painter: QPainter, snapshot: TrackerSnapshot) -> None:
+        forecast = snapshot.forecast
+        if forecast is None:
+            return
+        recommendation = forecast.recommendation
+        probability_labels: list[QRectF] = []
+        for chance in forecast.likely_routes:
+            route_rect = self._route_rect(chance.location)
+            if route_rect is None:
+                continue
+            recommended = (
+                recommendation is not None
+                and recommendation.route.number == chance.location.number
+            )
+            fill = QColor(241, 200, 75, 72 if recommended else 40)
+            painter.setBrush(fill)
+            painter.setPen(
+                QPen(
+                    GOLD,
+                    3 if recommended else 2,
+                    Qt.PenStyle.SolidLine if recommended else Qt.PenStyle.DashLine,
+                )
+            )
+            painter.drawRoundedRect(route_rect, 3, 3)
+            probability_labels.append(
+                self._draw_probability(
+                    painter,
+                    route_rect.center(),
+                    chance.probability,
+                    probability_labels,
+                )
+            )
+
+    def _draw_probability(
+        self,
+        painter: QPainter,
+        center: QPointF,
+        probability: float,
+        occupied: list[QRectF],
+    ) -> QRectF:
+        base_rect = QRectF(center.x() - 20, center.y() - 7, 40, 14)
+        label_rect = base_rect
+        for offset_x, offset_y in (
+            (0, 0),
+            (0, -16),
+            (0, 16),
+            (-22, 0),
+            (22, 0),
+        ):
+            candidate = base_rect.translated(offset_x, offset_y)
+            if not any(candidate.intersects(other) for other in occupied):
+                label_rect = candidate
+                break
+        painter.setPen(QPen(GOLD, 1))
+        painter.setBrush(QColor(16, 27, 45, 225))
+        painter.drawRoundedRect(label_rect, 4, 4)
+        font = QFont(self.font())
+        font.setBold(True)
+        font.setPixelSize(8)
+        painter.setFont(font)
+        painter.setPen(WHITE)
+        painter.drawText(
+            label_rect,
+            Qt.AlignmentFlag.AlignCenter,
+            _format_probability(probability),
+        )
+        return label_rect
 
     def _draw_marker(
         self,
@@ -417,23 +508,22 @@ class TrackerWindow(QWidget):
                 label=self.roamer_legend_label,
             )
         )
+        legend.addWidget(self._legend("▱", "PRÓX.", "next"))
         legend.addStretch()
-        map_note = QLabel("MAPA ORIGINAL · FIRERED")
-        map_note.setObjectName("mapNote")
-        legend.addWidget(map_note)
         layout.addLayout(legend)
 
         self.match_banner = QFrame()
         self.match_banner.setObjectName("matchBanner")
         self.match_banner.setProperty("matched", False)
+        self.match_banner.setProperty("mode", "idle")
         match_layout = QHBoxLayout(self.match_banner)
         match_layout.setContentsMargins(12, 8, 12, 8)
         match_layout.setSpacing(8)
         self.match_icon = QLabel("○")
         self.match_icon.setObjectName("matchIcon")
-        self.match_text = QLabel("Todavía no comparten zona")
+        self.match_text = QLabel("Calculando próximo movimiento")
         self.match_text.setObjectName("matchText")
-        self.match_hint = QLabel("Cambiá de área para mover al roamer")
+        self.match_hint = QLabel("")
         self.match_hint.setObjectName("matchHint")
         match_layout.addWidget(self.match_icon)
         match_layout.addWidget(self.match_text)
@@ -595,9 +685,10 @@ class TrackerWindow(QWidget):
                 font-weight: 700;
                 letter-spacing: 1px;
             }}
-            QLabel#endpoint, QLabel#mapNote {{ color: #7387a1; font-size: 9px; }}
+            QLabel#endpoint {{ color: #7387a1; font-size: 9px; }}
             QLabel#playerLegend {{ color: #49b8d0; font-size: 15px; }}
             QLabel#roamerLegend {{ color: #e2554d; font-size: 15px; }}
+            QLabel#nextLegend {{ color: #f1c84b; font-size: 15px; }}
             QLabel#legendLabel {{ color: #9aabc1; font-size: 9px; font-weight: 700; }}
             QFrame#matchBanner {{
                 background: #172640;
@@ -608,11 +699,17 @@ class TrackerWindow(QWidget):
                 background: #443917;
                 border-color: #f1c84b;
             }}
+            QFrame#matchBanner[mode="cross"] {{
+                background: #302d1d;
+                border-color: #f1c84b;
+            }}
             QLabel#matchIcon {{ color: #7387a1; font-size: 19px; }}
             QFrame#matchBanner[matched="true"] QLabel#matchIcon {{ color: #f1c84b; }}
+            QFrame#matchBanner[mode="cross"] QLabel#matchIcon {{ color: #f1c84b; }}
             QLabel#matchText {{ color: #dce5ec; font-size: 11px; font-weight: 700; }}
             QFrame#matchBanner[matched="true"] QLabel#matchText {{ color: #fff4b0; }}
             QLabel#matchHint {{ color: #7387a1; font-size: 9px; }}
+            QFrame#matchBanner[mode="cross"] QLabel#matchHint {{ color: #d7bd63; }}
             QFrame#roamerCard, QFrame#playerCard {{
                 background: #172640;
                 border: 1px solid #304260;
@@ -643,21 +740,46 @@ class TrackerWindow(QWidget):
             snapshot.roamer.location.name if snapshot.roamer.active else "INACTIVO"
         )
         self.player_location.setText(snapshot.player.name)
-        self.match_banner.setProperty("matched", snapshot.same_area)
-        self.match_banner.style().unpolish(self.match_banner)
-        self.match_banner.style().polish(self.match_banner)
+        mode = "idle"
+        tooltip = ""
         if not snapshot.roamer.active:
             self.match_icon.setText("—")
             self.match_text.setText("El roamer no está activo")
             self.match_hint.setText("Todavía no recorre Kanto")
         elif snapshot.same_area:
+            mode = "matched"
             self.match_icon.setText("◎")
             self.match_text.setText("¡MISMA ZONA!")
-            self.match_hint.setText("Caminá en el pasto")
+            self.match_hint.setText("")
+        elif snapshot.forecast is not None:
+            recommendation = snapshot.forecast.recommendation
+            tooltip = "Próximo movimiento: " + ", ".join(
+                f"{chance.location.name} "
+                f"{_format_probability(chance.probability)}"
+                for chance in snapshot.forecast.likely_routes
+            )
+            if recommendation is not None:
+                mode = "cross"
+                self.match_icon.setText("↗")
+                self.match_text.setText(
+                    f"CRUZÁ A {recommendation.route.name.upper()}"
+                    f" · {_format_probability(recommendation.probability)}"
+                )
+                self.match_hint.setText("INTERCEPCIÓN EN EL PRÓXIMO CAMBIO")
+            else:
+                self.match_icon.setText("○")
+                self.match_text.setText("PRÓXIMO MOVIMIENTO")
+                self.match_hint.setText("RUTAS PROBABLES EN EL MAPA")
         else:
             self.match_icon.setText("○")
-            self.match_text.setText("Todavía no comparten zona")
-            self.match_hint.setText("Cambiá de área para mover al roamer")
+            self.match_text.setText("Movimiento no disponible")
+            self.match_hint.setText("")
+
+        self.match_banner.setToolTip(tooltip)
+        self.match_banner.setProperty("matched", snapshot.same_area)
+        self.match_banner.setProperty("mode", mode)
+        self.match_banner.style().unpolish(self.match_banner)
+        self.match_banner.style().polish(self.match_banner)
 
     def _show_species(self, species: RoamerSpecies) -> None:
         if species == self._displayed_species:

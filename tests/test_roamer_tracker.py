@@ -26,6 +26,7 @@ from tracker import (  # noqa: E402
     SUICUNE,
     Roamer,
     TrackerSnapshot,
+    forecast_movement,
     location_for,
 )
 
@@ -100,12 +101,31 @@ class TrackerWindowDisplayTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     @staticmethod
-    def snapshot(species, *, active: bool = True) -> TrackerSnapshot:
-        location = location_for(3, 27)
+    def snapshot(
+        species,
+        *,
+        active: bool = True,
+        roamer_map: int = 27,
+        player_map: int = 26,
+        history_exclusion_map: int = 20,
+    ) -> TrackerSnapshot:
+        roamer_location = location_for(3, roamer_map)
+        player_location = location_for(3, player_map)
+        same_area = active and roamer_map == player_map
+        forecast = (
+            forecast_movement(
+                roamer_location,
+                player_location,
+                location_for(3, history_exclusion_map),
+            )
+            if active
+            else None
+        )
         return TrackerSnapshot(
-            roamer=Roamer(species, location, active),
-            player=location_for(3, 26),
-            same_area=False,
+            roamer=Roamer(species, roamer_location, active),
+            player=player_location,
+            same_area=same_area,
+            forecast=forecast,
         )
 
     def test_updates_name_sprite_and_title_for_each_roamer(self) -> None:
@@ -140,6 +160,77 @@ class TrackerWindowDisplayTests(unittest.TestCase):
         self.assertEqual(window.roamer_location.text(), "INACTIVO")
         self.assertEqual(window.match_text.text(), "El roamer no está activo")
         self.assertFalse(window.match_banner.property("matched"))
+        window.close()
+
+    def test_keeps_probabilities_without_recommending_a_reset(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+        snapshot = self.snapshot(SUICUNE, roamer_map=34, player_map=7)
+        window.show_snapshot(snapshot)
+
+        self.assertIsNone(snapshot.forecast.recommendation)
+        self.assertEqual(window.match_banner.property("mode"), "idle")
+        self.assertEqual(window.match_text.text(), "PRÓXIMO MOVIMIENTO")
+        self.assertEqual(window.match_hint.text(), "RUTAS PROBABLES EN EL MAPA")
+        self.assertIn("Ruta 7 47,1%", window.match_banner.toolTip())
+        window.close()
+
+    def test_recommends_fast_cross_when_likely_route_matches_the_city(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+        snapshot = self.snapshot(SUICUNE, roamer_map=23, player_map=5)
+        window.show_snapshot(snapshot)
+
+        self.assertIsNotNone(snapshot.forecast.recommendation)
+        self.assertEqual(window.match_banner.property("mode"), "cross")
+        self.assertEqual(window.match_text.text(), "CRUZÁ A RUTA 6 · 15,9%")
+        window.close()
+
+    def test_recommends_route_2_from_viridian_after_route_1(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+        snapshot = self.snapshot(
+            SUICUNE,
+            roamer_map=41,
+            player_map=1,
+            history_exclusion_map=19,
+        )
+        window.show_snapshot(snapshot)
+
+        self.assertEqual(window.match_banner.property("mode"), "cross")
+        self.assertEqual(window.match_text.text(), "CRUZÁ A RUTA 2 · 47,1%")
+        self.assertIn("Ruta 23 47,1%", window.match_banner.toolTip())
+        window.close()
+
+    def test_same_area_message_has_no_redundant_instruction(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+        window.show_snapshot(
+            self.snapshot(SUICUNE, roamer_map=27, player_map=27)
+        )
+
+        self.assertEqual(window.match_text.text(), "¡MISMA ZONA!")
+        self.assertEqual(window.match_hint.text(), "")
         window.close()
 
 
