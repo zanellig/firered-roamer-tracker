@@ -7,6 +7,30 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-02
+
+### Added
+
+- Added automatic LeafGreen Rev 1 and Emerald detection alongside FireRed Rev
+  1, with exact per-game RAM layouts and safe rejection of unsupported ROMs.
+- Added Latias and Latios tracking, the Hoenn region map, Emerald location
+  names, movement forecasts, and direct route-interception recommendations.
+
+### Changed
+
+- Generalized both desktop layouts, the terminal reader, and asset generation
+  so the displayed map, region, species, and movement rules follow the active
+  game.
+- Each supported game now carries its own map group, region lookups and
+  movement rules, so region behaviour is resolved in one place instead of
+  being re-derived per call site.
+
+### Distribution notes
+
+- The RAM addresses target FireRed and LeafGreen USA/Europe Rev 1 (BPRE, BPGE)
+  and Emerald USA/Europe (BPEE) running in mGBA through RetroArch's Network
+  Command Interface. Any other ROM is rejected before RAM is read.
+
 ## [0.4.0] - 2026-08-02
 
 ### Added
@@ -66,5 +90,6 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - The RAM addresses target FireRed USA/Europe Rev 1 (BPRE) running in mGBA
   through RetroArch's Network Command Interface.
 
-[Unreleased]: https://github.com/zanellig/firered-roamer-tracker/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/zanellig/firered-roamer-tracker/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/zanellig/firered-roamer-tracker/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/zanellig/firered-roamer-tracker/releases/tag/v0.4.0

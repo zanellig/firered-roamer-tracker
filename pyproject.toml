@@ -1,7 +1,7 @@
 [project]
 name = "firered-roamer-tracker"
-version = "0.4.0"
-description = "Always-on-top FireRed roaming Pokémon tracker"
+version = "0.5.0"
+description = "Always-on-top FireRed, LeafGreen and Emerald roaming Pokémon tracker"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
