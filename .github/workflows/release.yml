@@ -20,19 +20,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: blacksmith-2vcpu-ubuntu-2404
             platform: Linux
             artifact: FireRedRoamerTracker-Linux
-          - os: windows-latest
+          - os: blacksmith-2vcpu-windows-2025
             platform: Windows
             artifact: FireRedRoamerTracker-Windows
-          - os: macos-latest
+          - os: blacksmith-6vcpu-macos-latest
             platform: macOS
             artifact: FireRedRoamerTracker-macOS
 
     steps:
       - name: Check out the tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Linux Qt system library
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libegl1
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -97,7 +103,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     permissions:
       contents: write
 

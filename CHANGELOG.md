@@ -26,7 +26,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   point and retained the standalone terminal entry point.
 - Added Ruff linting and formatting, Pyright type checking and pre-commit hooks.
 - Added reproducible PyInstaller packaging and tagged GitHub release builds for
-  Linux, Windows and macOS, including licenses and SHA-256 checksums.
+  Linux, Windows and macOS on native Blacksmith runners, including licenses and
+  SHA-256 checksums.
 
 ### Changed
 
@@ -51,6 +52,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   movement-status rows.
 - Fixed production type errors around Qt application narrowing and the
   automatic pin-controller sentinel.
+- Fixed Windows and macOS startup by loading the KDE D-Bus integration only on
+  supported Linux systems.
+- Fixed headless Linux release verification by provisioning the required EGL
+  runtime library before the GUI tests.
 - Hardened RAM and network response validation, active save-block bounds and
   unknown roamer state handling.
 
