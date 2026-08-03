@@ -22,13 +22,13 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: Linux
-            artifact: FireRedRoamerTracker-Linux
+            artifact: RoamerTracker-Linux
           - os: windows-latest
             platform: Windows
-            artifact: FireRedRoamerTracker-Windows
+            artifact: RoamerTracker-Windows
           - os: macos-latest
             platform: macOS
-            artifact: FireRedRoamerTracker-macOS
+            artifact: RoamerTracker-macOS
 
     steps:
       - name: Check out the tagged source
@@ -62,35 +62,35 @@ jobs:
         run: uv run python -m unittest discover -s tests -v
 
       - name: Build native application
-        run: uv run pyinstaller --clean --noconfirm FireRedRoamerTracker.spec
+        run: uv run pyinstaller --clean --noconfirm RoamerTracker.spec
 
       - name: Package Linux application
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          package_dir="package/FireRedRoamerTracker-Linux"
+          package_dir="package/RoamerTracker-Linux"
           mkdir -p "$package_dir" release
-          cp dist/FireRedRoamerTracker README.md LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
-          tar -C package -czf release/FireRedRoamerTracker-Linux.tar.gz FireRedRoamerTracker-Linux
+          cp dist/RoamerTracker README.md LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
+          tar -C package -czf release/RoamerTracker-Linux.tar.gz RoamerTracker-Linux
 
       - name: Package Windows application
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $packageDir = "package/FireRedRoamerTracker-Windows"
+          $packageDir = "package/RoamerTracker-Windows"
           New-Item -ItemType Directory -Force $packageDir, "release" | Out-Null
-          Copy-Item dist/FireRedRoamerTracker.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $packageDir
-          Compress-Archive -Path $packageDir -DestinationPath release/FireRedRoamerTracker-Windows.zip
+          Copy-Item dist/RoamerTracker.exe, README.md, LICENSE, THIRD_PARTY_NOTICES.md $packageDir
+          Compress-Archive -Path $packageDir -DestinationPath release/RoamerTracker-Windows.zip
 
       - name: Package macOS application
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          package_dir="package/FireRedRoamerTracker-macOS"
+          package_dir="package/RoamerTracker-macOS"
           mkdir -p "$package_dir" release
-          cp -R dist/FireRedRoamerTracker.app "$package_dir/"
+          cp -R dist/RoamerTracker.app "$package_dir/"
           cp README.md LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
-          ditto -c -k --sequesterRsrc --keepParent "$package_dir" release/FireRedRoamerTracker-macOS.zip
+          ditto -c -k --sequesterRsrc --keepParent "$package_dir" release/RoamerTracker-macOS.zip
 
       - name: Upload native archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -136,7 +136,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          title="FireRed Roamer Tracker ${GITHUB_REF_NAME}"
+          title="Roamer Tracker ${GITHUB_REF_NAME}"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" release/* --clobber
             gh release edit "$GITHUB_REF_NAME" --title "$title" --notes-file release-notes.md

@@ -24,7 +24,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="FireRedRoamerTracker",
+    name="RoamerTracker",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -42,7 +42,7 @@ exe = EXE(
 if sys.platform == "darwin":
     app = BUNDLE(
         exe,
-        name="FireRedRoamerTracker.app",
+        name="RoamerTracker.app",
         icon=None,
-        bundle_identifier="io.github.zanellig.firered-roamer-tracker",
+        bundle_identifier="io.github.zanellig.roamer-tracker",
     )

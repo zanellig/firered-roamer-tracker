@@ -100,7 +100,7 @@ SUICUNE = RoamerSpecies(245, "Suicune")
 LATIAS = RoamerSpecies(407, "Latias")
 LATIOS = RoamerSpecies(408, "Latios")
 
-# FireRed stores VAR_STARTER_MON as an index, not a species ID.
+# FireRed and LeafGreen store VAR_STARTER_MON as an index, not a species ID.
 ROAMER_BY_STARTER = {
     0: ENTEI,  # Bulbasaur
     1: RAIKOU,  # Squirtle
@@ -143,8 +143,8 @@ class TrackerSnapshot:
     forecast: MovementForecast | None = None
 
 
-# Map group 3 indices used by FireRed. The first 19 entries are towns and
-# islands, then map 19 starts Route 1.
+# Map group 3 indices used by FireRed and LeafGreen. The first 19 entries are
+# towns and islands, then map 19 starts Route 1.
 AREA_NAMES = {
     0: "Pallet Town",
     1: "Viridian City",
@@ -293,8 +293,8 @@ HOENN_MAP_BOUNDS = {
 }
 
 
-# Exact neighbor rows from FireRed's sRoamerLocations table. Route 21 uses its
-# north map (39); the south map (40) is never selected for the roamer.
+# Exact neighbor rows from FireRed and LeafGreen's sRoamerLocations table.
+# Route 21 uses its north map (39); the south map (40) is never selected.
 KANTO_ROAMER_ROUTE_GRAPH = {
     19: (20, 39, 41),
     20: (19, 21, 41),

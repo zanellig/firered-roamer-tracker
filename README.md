@@ -139,10 +139,10 @@ The PyInstaller specification builds a single windowed executable and bundles
 the map, sprites and application icon:
 
 ```bash
-uv run pyinstaller --clean --noconfirm FireRedRoamerTracker.spec
+uv run pyinstaller --clean --noconfirm RoamerTracker.spec
 ```
 
-The artifact is written to `dist/FireRedRoamerTracker` (with the platform's
+The artifact is written to `dist/RoamerTracker` (with the platform's
 usual executable suffix). PyInstaller builds are platform-specific, so create
 each release artifact on the operating system it targets.
 

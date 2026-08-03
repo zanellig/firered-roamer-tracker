@@ -7,6 +7,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed the application from `FireRedRoamerTracker` to `RoamerTracker`, now
+  that FireRed is one of three supported games. The PyInstaller spec, the built
+  executable, the macOS bundle identifier and the distributed archive names all
+  follow the new name.
+
+### Upgrade notes
+
+- Release archives are now published as `RoamerTracker-<platform>` instead of
+  `FireRedRoamerTracker-<platform>`. Update any download scripts or shortcuts
+  that referenced the old filenames.
+
 ## [0.5.0] - 2026-08-02
 
 ### Added

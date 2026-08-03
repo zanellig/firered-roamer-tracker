@@ -1,4 +1,4 @@
-# FireRed Roamer Tracker vX.Y.Z
+# Roamer Tracker vX.Y.Z
 
 ## Highlights
 
@@ -18,16 +18,16 @@ Summarize the user-visible purpose of this release in two or three sentences.
 
 ## Compatibility
 
-- Supported FireRed revision, emulator integration and known limitations.
+- Supported games and revisions, emulator integration and known limitations.
 - State whether the native builds are signed or notarized.
 
 ## Downloads
 
 | Platform | File |
 | --- | --- |
-| Linux | `FireRedRoamerTracker-Linux.tar.gz` |
-| Windows | `FireRedRoamerTracker-Windows.zip` |
-| macOS | `FireRedRoamerTracker-macOS.zip` |
+| Linux | `RoamerTracker-Linux.tar.gz` |
+| Windows | `RoamerTracker-Windows.zip` |
+| macOS | `RoamerTracker-macOS.zip` |
 
 Verify downloads against `SHA256SUMS.txt` before running them.
 
