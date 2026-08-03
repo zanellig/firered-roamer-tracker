@@ -7,18 +7,25 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-02
+
 ### Changed
 
 - Renamed the application from `FireRedRoamerTracker` to `RoamerTracker`, now
   that FireRed is one of three supported games. The PyInstaller spec, the built
   executable, the macOS bundle identifier and the distributed archive names all
   follow the new name.
+- Renamed the repository to `zanellig/roamer-tracker`.
 
 ### Upgrade notes
 
 - Release archives are now published as `RoamerTracker-<platform>` instead of
   `FireRedRoamerTracker-<platform>`. Update any download scripts or shortcuts
   that referenced the old filenames.
+- The macOS bundle identifier changed to `io.github.zanellig.roamer-tracker`,
+  so macOS treats this as a separate application from earlier releases.
+- GitHub redirects the previous repository URL, so existing clones and links
+  keep working.
 
 ## [0.5.0] - 2026-08-02
 
@@ -103,6 +110,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - The RAM addresses target FireRed USA/Europe Rev 1 (BPRE) running in mGBA
   through RetroArch's Network Command Interface.
 
-[Unreleased]: https://github.com/zanellig/firered-roamer-tracker/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/zanellig/firered-roamer-tracker/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/zanellig/firered-roamer-tracker/releases/tag/v0.4.0
+[Unreleased]: https://github.com/zanellig/roamer-tracker/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/zanellig/roamer-tracker/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/zanellig/roamer-tracker/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/zanellig/roamer-tracker/releases/tag/v0.4.0
