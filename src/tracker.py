@@ -11,11 +11,15 @@ ROM_HEADER_ADDR = 0x080000AC
 ROM_HEADER_LENGTH = 17
 FIRERED_LEAFGREEN_ROAMER_ADDR = 0x0203F3AE
 FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR = 0x03005008
+FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR = 0x0300500C
 PLAYER_LOCATION_OFFSET = 0x0004
+# Save block 2 opens with the trainer's name: 7 characters and a terminator.
+PLAYER_NAME_LENGTH = 8
 FIRERED_LEAFGREEN_STARTER_VAR_OFFSET = 0x1062
 FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET = 0x30D8
 FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET = 0x30E3
 EMERALD_SAVE_BLOCK1_PTR_ADDR = 0x03005D8C
+EMERALD_SAVE_BLOCK2_PTR_ADDR = 0x03005D90
 EMERALD_ROAMER_ADDR = 0x0203BC86
 EMERALD_ROAMER_SPECIES_OFFSET = 0x31E4
 EMERALD_ROAMER_ACTIVE_OFFSET = 0x31EF
@@ -141,6 +145,43 @@ class TrackerSnapshot:
     player: Location
     same_area: bool
     forecast: MovementForecast | None = None
+    # None while the game has not shown a readable trainer name yet.
+    player_name: str | None = None
+
+
+# The games store names in their own character table, not in ASCII. Only what a
+# trainer name can hold is mapped; any other byte means the read did not land
+# on a name. Ranges and symbols from pret's charmap.txt.
+GAME_TEXT_TERMINATOR = 0xFF
+GAME_TEXT = {
+    0x00: " ",
+    0xAB: "!",
+    0xAC: "?",
+    0xAD: ".",
+    0xAE: "-",
+    0xB3: "‘",
+    0xB4: "’",
+    0xB5: "♂",
+    0xB6: "♀",
+    0xB8: ",",
+    0xBA: "/",
+    **{0xA1 + digit: str(digit) for digit in range(10)},
+    **{0xBB + index: chr(ord("A") + index) for index in range(26)},
+    **{0xD5 + index: chr(ord("a") + index) for index in range(26)},
+}
+
+
+def decode_player_name(data: bytes) -> str | None:
+    """Decode a stored trainer name, or None when the bytes are not one."""
+    characters: list[str] = []
+    for byte in data:
+        if byte == GAME_TEXT_TERMINATOR:
+            break
+        character = GAME_TEXT.get(byte)
+        if character is None:
+            return None
+        characters.append(character)
+    return "".join(characters).strip() or None
 
 
 # Map group 3 indices used by FireRed and LeafGreen. The first 19 entries are
@@ -462,6 +503,7 @@ class _MemoryProfile:
     game_code: bytes
     revision: int
     save_block1_ptr_addr: int
+    save_block2_ptr_addr: int
     roamer_addr: int
     roamer_species_offset: int
     roamer_active_offset: int
@@ -474,6 +516,7 @@ _FIRERED_PROFILE = _MemoryProfile(
     game_code=b"BPRE",
     revision=1,
     save_block1_ptr_addr=FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR,
+    save_block2_ptr_addr=FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR,
     roamer_addr=FIRERED_LEAFGREEN_ROAMER_ADDR,
     roamer_species_offset=FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET,
     roamer_active_offset=FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET,
@@ -485,6 +528,7 @@ _LEAFGREEN_PROFILE = _MemoryProfile(
     game_code=b"BPGE",
     revision=1,
     save_block1_ptr_addr=FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR,
+    save_block2_ptr_addr=FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR,
     roamer_addr=FIRERED_LEAFGREEN_ROAMER_ADDR,
     roamer_species_offset=FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET,
     roamer_active_offset=FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET,
@@ -496,6 +540,7 @@ _EMERALD_PROFILE = _MemoryProfile(
     game_code=b"BPEE",
     revision=0,
     save_block1_ptr_addr=EMERALD_SAVE_BLOCK1_PTR_ADDR,
+    save_block2_ptr_addr=EMERALD_SAVE_BLOCK2_PTR_ADDR,
     roamer_addr=EMERALD_ROAMER_ADDR,
     roamer_species_offset=EMERALD_ROAMER_SPECIES_OFFSET,
     roamer_active_offset=EMERALD_ROAMER_ACTIVE_OFFSET,
@@ -528,6 +573,14 @@ def _read_memory_profile(reader: MemoryReader) -> _MemoryProfile:
     if profile is None:
         raise TrackerError("El juego abierto no es una versión compatible")
     return profile
+
+
+def _read_player_name(reader: MemoryReader, profile: _MemoryProfile) -> str | None:
+    """Read the trainer's name, or None when RAM is not holding one yet."""
+    save_block2_ptr = u32le(reader.read_memory(profile.save_block2_ptr_addr, 4))
+    if not EWRAM_START <= save_block2_ptr <= EWRAM_END - PLAYER_NAME_LENGTH:
+        return None
+    return decode_player_name(reader.read_memory(save_block2_ptr, PLAYER_NAME_LENGTH))
 
 
 class RetroArchNCI:
@@ -660,4 +713,5 @@ def read_snapshot(reader: MemoryReader) -> TrackerSnapshot:
         player=current,
         same_area=same_area,
         forecast=forecast,
+        player_name=_read_player_name(reader, profile),
     )

@@ -95,9 +95,17 @@ UI_LAYOUTS = (CLASSIC_UI, TOWN_MAP_UI)
 UI_LAYOUT_NAMES = {CLASSIC_UI: "Clásica", TOWN_MAP_UI: "Mapa regional"}
 UI_SETTINGS_KEY = "ui/layout"
 
+# Stands in for the trainer name until the game has one to read.
+PLAYER_FALLBACK_NAME = "VOS"
+
 
 def _format_probability(probability: float) -> str:
     return f"{probability:.1%}".replace(".", ",")
+
+
+def player_name(snapshot: TrackerSnapshot) -> str:
+    """What to call the player: their trainer name once the game shows one."""
+    return snapshot.player_name or PLAYER_FALLBACK_NAME
 
 
 def normalize_ui_layout(value: object) -> str | None:
@@ -525,13 +533,14 @@ class RegionMapWidget(QWidget):
             player = self._point(self._snapshot.player)
             roamer = self._point(self._snapshot.roamer.location)
             marker = self._snapshot.roamer.species.name[0]
+            player_marker = player_name(self._snapshot)[0].upper()
             if self._snapshot.same_area and player is not None:
-                self._draw_match(painter, player, marker)
+                self._draw_match(painter, player, marker, player_marker)
             else:
                 if self._snapshot.roamer.active and roamer is not None:
                     self._draw_marker(painter, roamer, CORAL, marker, diamond=True)
                 if player is not None:
-                    self._draw_marker(painter, player, CYAN, "V")
+                    self._draw_marker(painter, player, CYAN, player_marker)
         painter.restore()
 
         painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -676,13 +685,14 @@ class RegionMapWidget(QWidget):
         painter: QPainter,
         point: tuple[float, float],
         roamer_marker: str,
+        player_marker: str,
     ) -> None:
         x, y = self._scaled(point)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setBrush(QColor(241, 200, 75, 70))
         painter.setPen(QPen(GOLD, 3))
         painter.drawEllipse(QRectF(x - 18, y - 18, 36, 36))
-        self._draw_marker(painter, (point[0] - 2.5, point[1]), CYAN, "V")
+        self._draw_marker(painter, (point[0] - 2.5, point[1]), CYAN, player_marker)
         self._draw_marker(
             painter,
             (point[0] + 2.5, point[1]),
@@ -826,9 +836,14 @@ class TownMapView(DragBar):
                 f"¡{species} está en tu misma zona!",
                 f"Buscá en {snapshot.player.name.upper()}.",
             ]
+        player = snapshot.player.name.upper()
         script = [
             f"{species} está en {snapshot.roamer.location.name.upper()}.\n"
-            f"Vos estás en {snapshot.player.name.upper()}."
+            + (
+                f"{snapshot.player_name.upper()} está en {player}."
+                if snapshot.player_name
+                else f"Vos estás en {player}."
+            )
         ]
         forecast = snapshot.forecast
         if forecast is None:
@@ -1121,7 +1136,16 @@ class TrackerWindow(QWidget):
 
         legend = QHBoxLayout()
         legend.setSpacing(14)
-        legend.addWidget(self._legend("dot", "VOS", "player", CYAN))
+        self.player_legend_label = QLabel(PLAYER_FALLBACK_NAME)
+        legend.addWidget(
+            self._legend(
+                "dot",
+                PLAYER_FALLBACK_NAME,
+                "player",
+                CYAN,
+                label=self.player_legend_label,
+            )
+        )
         self.roamer_legend_label = QLabel("ROAMER")
         legend.addWidget(
             self._legend(
@@ -1172,6 +1196,7 @@ class TrackerWindow(QWidget):
         self.roamer_location = QLabel("—")
         self.player_location = QLabel("—")
         self.roamer_heading = QLabel("ROAMER")
+        self.player_heading = QLabel(PLAYER_FALLBACK_NAME)
         self.roamer_sprite = QLabel()
         locations.addWidget(
             self._location_card(
@@ -1184,7 +1209,12 @@ class TrackerWindow(QWidget):
             3,
         )
         locations.addWidget(
-            self._location_card("VOS", self.player_location, "playerCard"),
+            self._location_card(
+                PLAYER_FALLBACK_NAME,
+                self.player_location,
+                "playerCard",
+                heading=self.player_heading,
+            ),
             2,
         )
         layout.addLayout(locations)
@@ -1387,6 +1417,9 @@ class TrackerWindow(QWidget):
             snapshot.roamer.location.name if snapshot.roamer.active else "INACTIVO"
         )
         self.player_location.setText(snapshot.player.name)
+        trainer = player_name(snapshot).upper()
+        self.player_heading.setText(trainer)
+        self.player_legend_label.setText(trainer)
         mode = "idle"
         tooltip = ""
         if not snapshot.roamer.active:

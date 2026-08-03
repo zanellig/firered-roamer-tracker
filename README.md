@@ -45,6 +45,10 @@ uv run python src/main.py --ui mapa
 `clasica` is the dark panelled window: connection row, map, legend, next-move
 notice, and the roamer and player cards. It is dragged from the top bar.
 
+Both layouts call the player by the name chosen in the game, and the marker on
+the map carries that name's initial. Until the game shows a readable name they
+fall back to `VOS` and a `V` marker.
+
 `mapa` is inspired by the GBA town map screens. The regional map fills most of
 the window, the top plate shows the species with its sprite and its zone, and
 everything else is spoken through the game's message box, one page every 2.6
@@ -193,8 +197,9 @@ USA/Europe Rev 1 (`BPGE`, revision 1), and Emerald USA/Europe (`BPEE`, revision
 0), all with the mGBA core. The tracker checks the ROM header before selecting
 the matching RAM layout. The location is read from the game's live state; the
 species and its active flag are read from whichever save block is loaded at
-that moment. The forecast also reads the live history of the last three
-locations used by the game itself. Other revisions and localized ROMs are
+that moment, and the trainer's name comes from the personal save block. The
+forecast also reads the live history of the last three locations used by the
+game itself. Other revisions and localized ROMs are
 rejected instead of being read with unsafe addresses.
 
 ## License

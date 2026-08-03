@@ -220,6 +220,7 @@ class TrackerWindowDisplayTests(unittest.TestCase):
         roamer_map: int = 27,
         player_map: int = 26,
         history_exclusion_map: int = 20,
+        player_name: str | None = None,
     ) -> TrackerSnapshot:
         roamer_location = location_for(3, roamer_map)
         player_location = location_for(3, player_map)
@@ -239,6 +240,7 @@ class TrackerWindowDisplayTests(unittest.TestCase):
             player=player_location,
             same_area=same_area,
             forecast=forecast,
+            player_name=player_name,
         )
 
     def test_centers_inline_icons_with_their_labels(self) -> None:
@@ -299,6 +301,54 @@ class TrackerWindowDisplayTests(unittest.TestCase):
             with self.subTest(point=point):
                 self.assertNotEqual(image.pixelColor(*point).name(), "#101b2d")
 
+        window.close()
+
+    def test_calls_the_player_by_their_trainer_name(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+
+        window.show_snapshot(self.snapshot(SUICUNE, player_name="Gonza"))
+        self.assertEqual(window.player_heading.text(), "GONZA")
+        self.assertEqual(window.player_legend_label.text(), "GONZA")
+
+        window.show_snapshot(self.snapshot(SUICUNE))
+        self.assertEqual(window.player_heading.text(), "VOS")
+        self.assertEqual(window.player_legend_label.text(), "VOS")
+        window.close()
+
+    def test_map_marker_carries_the_trainer_initial(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+        window.show()
+        self.app.processEvents()
+
+        drawn = []
+        for name in ("Gonza", "Ash", None):
+            for same_area in (False, True):
+                window.show_snapshot(
+                    self.snapshot(
+                        SUICUNE,
+                        player_map=27 if same_area else 26,
+                        player_name=name,
+                    )
+                )
+                drawn.append(window.map.grab().toImage())
+
+        # Every initial, matched or not, has to reach the marker: G, A and the
+        # V the tracker falls back to all draw a different map.
+        for index in range(0, len(drawn), 2):
+            self.assertNotEqual(drawn[index], drawn[(index + 2) % len(drawn)])
+            self.assertNotEqual(drawn[index + 1], drawn[(index + 3) % len(drawn)])
         window.close()
 
     def test_updates_name_sprite_and_title_for_each_roamer(self) -> None:
@@ -569,6 +619,7 @@ class TownMapViewTests(unittest.TestCase):
         roamer_map: int = 41,
         player_map: int = 1,
         history_exclusion_map: int = 19,
+        player_name: str | None = None,
     ) -> TrackerSnapshot:
         roamer_location = location_for(3, roamer_map)
         player_location = location_for(3, player_map)
@@ -577,6 +628,7 @@ class TownMapViewTests(unittest.TestCase):
             roamer=Roamer(SUICUNE, roamer_location, active),
             player=player_location,
             same_area=active and roamer_map == player_map,
+            player_name=player_name,
             forecast=(
                 forecast_movement(
                     roamer_location,
@@ -623,8 +675,12 @@ class TownMapViewTests(unittest.TestCase):
         window.show_snapshot(self.snapshot())
         script = view.pages()
         self.assertIn("SUICUNE está en RUTA 22.", script[0])
+        self.assertIn("Vos estás en VIRIDIAN CITY.", script[0])
         self.assertIn("RUTA 2 47,1%", script[1])
         self.assertIn("¡Cruzá a RUTA 2 ahora!", script[2])
+
+        window.show_snapshot(self.snapshot(player_name="Gonza"))
+        self.assertIn("GONZA está en VIRIDIAN CITY.", view.pages()[0])
 
         # Ruta 16 with the player in Fuchsia has no immediate crossing, so the
         # script keeps the odds and adds no interception page.

@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- The tracker now calls the player by the trainer name saved in the game
+  instead of the generic `VOS`, in the panels, the legend and the town map's
+  message box. The player's map marker carries that name's initial, so it
+  matches the trainer. Until a readable name is available — an unsupported
+  save state or a game that has not created one yet — it still shows `VOS`
+  and a `V` marker rather than failing the reading.
+
 ## [0.6.0] - 2026-08-02
 
 ### Added

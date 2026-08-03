@@ -12,13 +12,16 @@ from tracker import (  # noqa: E402
     EMERALD_ROAMER_ADDR,
     EMERALD_ROAMER_SPECIES_OFFSET,
     EMERALD_SAVE_BLOCK1_PTR_ADDR,
+    EMERALD_SAVE_BLOCK2_PTR_ADDR,
     ENTEI,
     FIRERED,
     FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET,
     FIRERED_LEAFGREEN_ROAMER_ADDR,
     FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET,
     FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR,
+    FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR,
     FIRERED_LEAFGREEN_STARTER_VAR_OFFSET,
+    GAME_TEXT,
     HOENN_MAP_BOUNDS,
     KANTO_MAP_BOUNDS,
     KANTO_ROAMER_ROUTE_GRAPH,
@@ -26,6 +29,7 @@ from tracker import (  # noqa: E402
     LATIOS,
     LEAFGREEN,
     PLAYER_LOCATION_OFFSET,
+    PLAYER_NAME_LENGTH,
     RAIKOU,
     ROM_HEADER_ADDR,
     ROM_HEADER_LENGTH,
@@ -33,6 +37,7 @@ from tracker import (  # noqa: E402
     Game,
     RetroArchNCI,
     TrackerError,
+    decode_player_name,
     forecast_movement,
     location_for,
     read_snapshot,
@@ -93,6 +98,23 @@ class LocationTests(unittest.TestCase):
         self.assertEqual(route_119.name, "Ruta 119")
         self.assertEqual(route_119.map_bounds, HOENN_MAP_BOUNDS[34])
         self.assertEqual(route_119.map_bounds.center, (11.0, 2.5))
+
+
+class PlayerNameTests(unittest.TestCase):
+    def test_decodes_the_characters_a_trainer_name_can_hold(self) -> None:
+        self.assertEqual(decode_player_name(bytes([0xBB, 0xD6, 0xD5, 0xFF])), "Aba")
+        self.assertEqual(decode_player_name(bytes([0xBB, 0x00, 0xA2, 0xFF])), "A 1")
+        self.assertEqual(decode_player_name(bytes([0xD4, 0xEE, 0xAA])), "Zz9")
+
+    def test_stops_at_the_terminator_and_ignores_the_padding(self) -> None:
+        self.assertEqual(
+            decode_player_name(bytes([0xBB, 0xBC, 0xFF, 0xBD, 0xBE])), "AB"
+        )
+
+    def test_rejects_bytes_that_are_not_a_name(self) -> None:
+        for data in (bytes([0xFF]), b"", bytes([0x00, 0x00]), bytes([0xBB, 0x60])):
+            with self.subTest(data=data):
+                self.assertIsNone(decode_player_name(data))
 
 
 class MovementForecastTests(unittest.TestCase):
@@ -186,6 +208,13 @@ class MovementForecastTests(unittest.TestCase):
 
 class SnapshotTests(unittest.TestCase):
     @staticmethod
+    def encode_name(name: str) -> bytes:
+        byte_for = {character: byte for byte, character in GAME_TEXT.items()}
+        return bytes(byte_for[character] for character in name).ljust(
+            PLAYER_NAME_LENGTH, b"\xff"
+        )
+
+    @staticmethod
     def roamer_state(
         species_id: int,
         active: int,
@@ -211,6 +240,8 @@ class SnapshotTests(unittest.TestCase):
         *,
         game: Game = FIRERED,
         save_block: int = 0x02001000,
+        save_block2: int = 0x02002000,
+        player_name: bytes | None = None,
         species_id: int = SUICUNE.id,
         active: int = 1,
         starter_id: int | None = None,
@@ -224,17 +255,23 @@ class SnapshotTests(unittest.TestCase):
     ) -> dict[tuple[int, int], bytes]:
         if game == EMERALD:
             save_block1_ptr_addr = EMERALD_SAVE_BLOCK1_PTR_ADDR
+            save_block2_ptr_addr = EMERALD_SAVE_BLOCK2_PTR_ADDR
             roamer_addr = EMERALD_ROAMER_ADDR
             species_offset = EMERALD_ROAMER_SPECIES_OFFSET
             active_offset = EMERALD_ROAMER_ACTIVE_OFFSET
         else:
             save_block1_ptr_addr = FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR
+            save_block2_ptr_addr = FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR
             roamer_addr = FIRERED_LEAFGREEN_ROAMER_ADDR
             species_offset = FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET
             active_offset = FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET
         values = {
             (ROM_HEADER_ADDR, ROM_HEADER_LENGTH): self.rom_header(game),
             (save_block1_ptr_addr, 4): save_block.to_bytes(4, "little"),
+            (save_block2_ptr_addr, 4): save_block2.to_bytes(4, "little"),
+            (save_block2, PLAYER_NAME_LENGTH): (
+                self.encode_name("Gonza") if player_name is None else player_name
+            ),
             (save_block + PLAYER_LOCATION_OFFSET, 2): bytes(player_map),
             (
                 save_block + species_offset,
@@ -317,6 +354,43 @@ class SnapshotTests(unittest.TestCase):
                 )
                 self.assertEqual(snapshot.roamer.species, expected)
                 self.assertFalse(snapshot.roamer.active)
+
+    def test_reads_the_trainer_name_of_every_supported_game(self) -> None:
+        for game in (FIRERED, LEAFGREEN, EMERALD):
+            with self.subTest(game=game.id):
+                snapshot = read_snapshot(
+                    FakeReader(
+                        self.values_for(
+                            game=game,
+                            species_id=LATIAS.id if game == EMERALD else SUICUNE.id,
+                            player_name=self.encode_name("RED 2"),
+                        )
+                    )
+                )
+                self.assertEqual(snapshot.player_name, "RED 2")
+
+    def test_keeps_no_name_when_the_bytes_are_not_one(self) -> None:
+        unreadable = {
+            "byte outside the character table": self.encode_name("Gonza").replace(
+                b"\xd5", b"\x60"
+            ),
+            "empty name": bytes([0xFF] * PLAYER_NAME_LENGTH),
+            "only padding spaces": bytes([0x00] * PLAYER_NAME_LENGTH),
+        }
+        for reason, name_bytes in unreadable.items():
+            with self.subTest(reason=reason):
+                snapshot = read_snapshot(
+                    FakeReader(self.values_for(player_name=name_bytes))
+                )
+                self.assertIsNone(snapshot.player_name)
+
+    def test_keeps_no_name_when_the_name_pointer_is_untrusted(self) -> None:
+        values = self.values_for()
+        values[(FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR, 4)] = (0xFFFFFFFF).to_bytes(
+            4, "little"
+        )
+
+        self.assertIsNone(read_snapshot(FakeReader(values)).player_name)
 
     def test_same_numbers_in_other_groups_are_not_a_match(self) -> None:
         reader = FakeReader(self.values_for(roamer_map=(4, 27), player_map=(4, 27)))
