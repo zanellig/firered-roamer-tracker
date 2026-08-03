@@ -31,7 +31,10 @@ from main import (  # noqa: E402
     stored_ui_layout,
 )
 from tracker import (  # noqa: E402
+    EMERALD,
     ENTEI,
+    FIRERED,
+    LATIAS,
     RAIKOU,
     SUICUNE,
     Roamer,
@@ -225,6 +228,7 @@ class TrackerWindowDisplayTests(unittest.TestCase):
             else None
         )
         return TrackerSnapshot(
+            game=FIRERED,
             roamer=Roamer(species, roamer_location, active),
             player=player_location,
             same_area=same_area,
@@ -310,6 +314,39 @@ class TrackerWindowDisplayTests(unittest.TestCase):
                 self.assertEqual(window.windowTitle(), f"Rastreador de {species.name}")
                 self.assertFalse(window.roamer_sprite.pixmap().isNull())
 
+        window.close()
+
+    def test_switches_to_emerald_species_and_the_hoenn_map(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+        roamer_location = location_for(0, 34, EMERALD)
+        player_location = location_for(0, 4, EMERALD)
+        snapshot = TrackerSnapshot(
+            game=EMERALD,
+            roamer=Roamer(LATIAS, roamer_location, True),
+            player=player_location,
+            same_area=False,
+            forecast=forecast_movement(
+                roamer_location,
+                player_location,
+                location_for(0, 25, EMERALD),
+                EMERALD,
+            ),
+        )
+
+        window.show_snapshot(snapshot)
+
+        self.assertEqual(window.brand.text(), "RASTREADOR  /  HOENN")
+        self.assertIn("Hoenn", window.map.accessibleName())
+        self.assertEqual(window.roamer_heading.text(), "LATIAS")
+        self.assertEqual(window.roamer_location.text(), "Ruta 119")
+        self.assertFalse(window.roamer_sprite.pixmap().isNull())
+        self.assertFalse(window.map.grab().toImage().isNull())
         window.close()
 
     def test_shows_inactive_roamer_without_a_false_match(self) -> None:
@@ -456,6 +493,7 @@ class TownMapViewTests(unittest.TestCase):
         roamer_location = location_for(3, roamer_map)
         player_location = location_for(3, player_map)
         return TrackerSnapshot(
+            game=FIRERED,
             roamer=Roamer(SUICUNE, roamer_location, active),
             player=player_location,
             same_area=active and roamer_map == player_map,

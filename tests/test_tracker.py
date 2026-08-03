@@ -7,18 +7,30 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tracker import (  # noqa: E402
+    EMERALD,
+    EMERALD_ROAMER_ACTIVE_OFFSET,
+    EMERALD_ROAMER_ADDR,
+    EMERALD_ROAMER_SPECIES_OFFSET,
+    EMERALD_SAVE_BLOCK1_PTR_ADDR,
     ENTEI,
+    FIRERED,
+    FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET,
+    FIRERED_LEAFGREEN_ROAMER_ADDR,
+    FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET,
+    FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR,
+    FIRERED_LEAFGREEN_STARTER_VAR_OFFSET,
+    HOENN_MAP_BOUNDS,
     KANTO_MAP_BOUNDS,
-    LOCATION_HISTORY_ADDR,
+    KANTO_ROAMER_ROUTE_GRAPH,
+    LATIAS,
+    LATIOS,
+    LEAFGREEN,
     PLAYER_LOCATION_OFFSET,
     RAIKOU,
-    ROAMER_ACTIVE_OFFSET,
-    ROAMER_ADDR,
-    ROAMER_ROUTE_MAPS,
-    ROAMER_SPECIES_OFFSET,
-    SAVE_BLOCK1_PTR_ADDR,
-    STARTER_VAR_OFFSET,
+    ROM_HEADER_ADDR,
+    ROM_HEADER_LENGTH,
     SUICUNE,
+    Game,
     RetroArchNCI,
     TrackerError,
     forecast_movement,
@@ -75,6 +87,13 @@ class LocationTests(unittest.TestCase):
         self.assertEqual(location_for(3, 41).name, "Ruta 22")
         self.assertEqual(location_for(3, 44).name, "Ruta 25")
 
+    def test_emerald_route_names_and_bounds_use_the_hoenn_grid(self) -> None:
+        route_119 = location_for(0, 34, EMERALD)
+
+        self.assertEqual(route_119.name, "Ruta 119")
+        self.assertEqual(route_119.map_bounds, HOENN_MAP_BOUNDS[34])
+        self.assertEqual(route_119.map_bounds.center, (11.0, 2.5))
+
 
 class MovementForecastTests(unittest.TestCase):
     def test_splits_normal_movement_between_route_neighbors(self) -> None:
@@ -91,7 +110,9 @@ class MovementForecastTests(unittest.TestCase):
         )
         for chance in forecast.likely_routes:
             self.assertAlmostEqual(chance.probability, 181 / 384)
-        random_only_routes = len(ROAMER_ROUTE_MAPS) - 1 - len(forecast.likely_routes)
+        random_only_routes = (
+            len(KANTO_ROAMER_ROUTE_GRAPH) - 1 - len(forecast.likely_routes)
+        )
         represented_probability = (
             sum(chance.probability for chance in forecast.likely_routes)
             + random_only_routes * forecast.random_route_probability
@@ -145,18 +166,50 @@ class MovementForecastTests(unittest.TestCase):
         self.assertEqual(forecast.recommendation.route.name, "Ruta 2")
         self.assertAlmostEqual(forecast.recommendation.probability, 181 / 384)
 
+    def test_emerald_uses_its_route_graph_and_random_hop_denominator(self) -> None:
+        forecast = forecast_movement(
+            location_for(0, 34, EMERALD),  # Route 119
+            location_for(0, 4, EMERALD),  # Fortree City
+            location_for(0, 25, EMERALD),
+            EMERALD,
+        )
+
+        self.assertEqual(
+            [chance.location.name for chance in forecast.likely_routes],
+            ["Ruta 118", "Ruta 120"],
+        )
+        for chance in forecast.likely_routes:
+            self.assertAlmostEqual(chance.probability, 287 / 608)
+        self.assertAlmostEqual(forecast.random_route_probability, 1 / 304)
+        self.assertEqual(forecast.recommendation.route.name, "Ruta 120")
+
 
 class SnapshotTests(unittest.TestCase):
     @staticmethod
-    def roamer_state(species_id: int, active: int) -> bytes:
-        state = bytearray(ROAMER_ACTIVE_OFFSET - ROAMER_SPECIES_OFFSET + 1)
+    def roamer_state(
+        species_id: int,
+        active: int,
+        species_offset: int,
+        active_offset: int,
+    ) -> bytes:
+        state = bytearray(active_offset - species_offset + 1)
         state[:2] = species_id.to_bytes(2, "little")
         state[-1] = active
         return bytes(state)
 
+    @staticmethod
+    def rom_header(game: Game) -> bytes:
+        code, revision = {
+            FIRERED: (b"BPRE", 1),
+            LEAFGREEN: (b"BPGE", 1),
+            EMERALD: (b"BPEE", 0),
+        }[game]
+        return code + bytes(12) + bytes((revision,))
+
     def values_for(
         self,
         *,
+        game: Game = FIRERED,
         save_block: int = 0x02001000,
         species_id: int = SUICUNE.id,
         active: int = 1,
@@ -169,22 +222,33 @@ class SnapshotTests(unittest.TestCase):
             (3, 20),
         ),
     ) -> dict[tuple[int, int], bytes]:
+        if game == EMERALD:
+            save_block1_ptr_addr = EMERALD_SAVE_BLOCK1_PTR_ADDR
+            roamer_addr = EMERALD_ROAMER_ADDR
+            species_offset = EMERALD_ROAMER_SPECIES_OFFSET
+            active_offset = EMERALD_ROAMER_ACTIVE_OFFSET
+        else:
+            save_block1_ptr_addr = FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR
+            roamer_addr = FIRERED_LEAFGREEN_ROAMER_ADDR
+            species_offset = FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET
+            active_offset = FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET
         values = {
-            (SAVE_BLOCK1_PTR_ADDR, 4): save_block.to_bytes(4, "little"),
+            (ROM_HEADER_ADDR, ROM_HEADER_LENGTH): self.rom_header(game),
+            (save_block1_ptr_addr, 4): save_block.to_bytes(4, "little"),
             (save_block + PLAYER_LOCATION_OFFSET, 2): bytes(player_map),
             (
-                save_block + ROAMER_SPECIES_OFFSET,
-                ROAMER_ACTIVE_OFFSET - ROAMER_SPECIES_OFFSET + 1,
-            ): self.roamer_state(species_id, active),
-            (LOCATION_HISTORY_ADDR, 8): bytes(
+                save_block + species_offset,
+                active_offset - species_offset + 1,
+            ): self.roamer_state(species_id, active, species_offset, active_offset),
+            (roamer_addr - 6, 8): bytes(
                 value
                 for location in (*location_history, roamer_map)
                 for value in location
             ),
         }
         if starter_id is not None:
-            values[(save_block + STARTER_VAR_OFFSET, 2)] = starter_id.to_bytes(
-                2, "little"
+            values[(save_block + FIRERED_LEAFGREEN_STARTER_VAR_OFFSET, 2)] = (
+                starter_id.to_bytes(2, "little")
             )
         return values
 
@@ -197,6 +261,34 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot.player.name, "Ruta 9")
         self.assertTrue(snapshot.same_area)
         self.assertIsNotNone(snapshot.forecast)
+
+    def test_detects_leafgreen_and_reuses_the_kanto_rules(self) -> None:
+        snapshot = read_snapshot(FakeReader(self.values_for(game=LEAFGREEN)))
+
+        self.assertEqual(snapshot.game, LEAFGREEN)
+        self.assertEqual(snapshot.roamer.species, SUICUNE)
+        self.assertEqual(snapshot.roamer.location.name, "Ruta 9")
+
+    def test_reads_both_emerald_roamers_and_hoenn_locations(self) -> None:
+        for species in (LATIAS, LATIOS):
+            with self.subTest(species=species.name):
+                snapshot = read_snapshot(
+                    FakeReader(
+                        self.values_for(
+                            game=EMERALD,
+                            species_id=species.id,
+                            roamer_map=(0, 34),
+                            player_map=(0, 34),
+                            location_history=((0, 25), (0, 33), (0, 25)),
+                        )
+                    )
+                )
+
+                self.assertEqual(snapshot.game, EMERALD)
+                self.assertEqual(snapshot.roamer.species, species)
+                self.assertEqual(snapshot.roamer.location.name, "Ruta 119")
+                self.assertTrue(snapshot.same_area)
+                self.assertIsNotNone(snapshot.forecast)
 
     def test_detects_each_roamer_from_the_saved_species(self) -> None:
         for species in (RAIKOU, ENTEI, SUICUNE):
@@ -245,7 +337,7 @@ class SnapshotTests(unittest.TestCase):
             [chance.location.name for chance in snapshot.forecast.likely_routes],
             ["Ruta 17"],
         )
-        self.assertIn((LOCATION_HISTORY_ADDR, 8), reader.reads)
+        self.assertIn((FIRERED_LEAFGREEN_ROAMER_ADDR - 6, 8), reader.reads)
 
     def test_inactive_roamer_does_not_match_the_player(self) -> None:
         reader = FakeReader(self.values_for(active=0))
@@ -259,11 +351,22 @@ class SnapshotTests(unittest.TestCase):
     def test_rejects_untrusted_save_block_pointer(self) -> None:
         reader = FakeReader(
             {
-                (SAVE_BLOCK1_PTR_ADDR, 4): (0xFFFFFFFF).to_bytes(4, "little"),
+                (ROM_HEADER_ADDR, ROM_HEADER_LENGTH): self.rom_header(FIRERED),
+                (FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR, 4): (0xFFFFFFFF).to_bytes(
+                    4, "little"
+                ),
             }
         )
         with self.assertRaisesRegex(TrackerError, "bloque de guardado"):
             read_snapshot(reader)
+
+    def test_rejects_an_unsupported_rom_revision_before_reading_ram(self) -> None:
+        header = b"BPGE" + bytes(12) + b"\x00"
+        reader = FakeReader({(ROM_HEADER_ADDR, ROM_HEADER_LENGTH): header})
+
+        with self.assertRaisesRegex(TrackerError, "versión compatible"):
+            read_snapshot(reader)
+        self.assertEqual(reader.reads, [(ROM_HEADER_ADDR, ROM_HEADER_LENGTH)])
 
 
 class ProtocolTests(unittest.TestCase):
@@ -279,7 +382,9 @@ class ProtocolTests(unittest.TestCase):
     def test_validates_and_decodes_memory_response(self) -> None:
         # RetroArch's response drops leading zeroes from the requested address.
         client, fake = self.make_client(b"READ_CORE_MEMORY 203f3ae 03 1B\n")
-        self.assertEqual(client.read_memory(ROAMER_ADDR, 2), bytes((3, 27)))
+        self.assertEqual(
+            client.read_memory(FIRERED_LEAFGREEN_ROAMER_ADDR, 2), bytes((3, 27))
+        )
         self.assertEqual(
             fake.sent,
             [(b"READ_CORE_MEMORY 0203F3AE 2", ("127.0.0.1", 55355))],
@@ -288,12 +393,12 @@ class ProtocolTests(unittest.TestCase):
     def test_rejects_response_for_a_stale_address(self) -> None:
         client, _fake = self.make_client(b"READ_CORE_MEMORY 2000000 03 1B\n")
         with self.assertRaisesRegex(TrackerError, "rechazada"):
-            client.read_memory(ROAMER_ADDR, 2)
+            client.read_memory(FIRERED_LEAFGREEN_ROAMER_ADDR, 2)
 
     def test_rejects_out_of_byte_range_payload(self) -> None:
         client, _fake = self.make_client(b"READ_CORE_MEMORY 0203F3AE 03 100\n")
         with self.assertRaisesRegex(TrackerError, "no es válida"):
-            client.read_memory(ROAMER_ADDR, 2)
+            client.read_memory(FIRERED_LEAFGREEN_ROAMER_ADDR, 2)
 
 
 if __name__ == "__main__":

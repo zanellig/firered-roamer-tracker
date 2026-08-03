@@ -60,13 +60,14 @@ from main import (  # noqa: E402
     ROAMER_ASSETS,
     WHITE,
     DragBar,
-    KantoMap,
+    RegionMapWidget,
     TrackerThread,
     _format_probability,
     positive_interval,
     positive_port,
 )
 from tracker import (  # noqa: E402
+    FIRERED,
     SUICUNE,
     Roamer,
     TrackerSnapshot,
@@ -79,6 +80,7 @@ from tracker import (  # noqa: E402
 _DEMO_ROAMER = location_for(3, 41)
 _DEMO_PLAYER = location_for(3, 1)
 DEMO_SNAPSHOT = TrackerSnapshot(
+    game=FIRERED,
     roamer=Roamer(species=SUICUNE, location=_DEMO_ROAMER, active=True),
     player=_DEMO_PLAYER,
     same_area=False,
@@ -212,8 +214,8 @@ def blurred(pixmap: QPixmap, size: QSize, factor: int = 14) -> QPixmap:
     )
 
 
-class StyledMap(KantoMap):
-    """KantoMap geometry with per-variant colours and marker shapes."""
+class StyledMap(RegionMapWidget):
+    """Region-map geometry with per-variant colours and marker shapes."""
 
     backdrop = INK
     frame_color = QColor("#304260")

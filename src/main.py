@@ -1,4 +1,4 @@
-"""Always-on-top desktop GUI for the FireRed roaming Pokémon tracker."""
+"""Always-on-top desktop GUI for supported GBA roaming Pokémon."""
 
 from __future__ import annotations
 
@@ -50,8 +50,12 @@ from PySide6.QtWidgets import (
 
 from tracker import (
     ENTEI,
+    FIRERED,
+    LATIAS,
+    LATIOS,
     RAIKOU,
     SUICUNE,
+    Game,
     Location,
     RetroArchNCI,
     RoamerSpecies,
@@ -68,6 +72,8 @@ ROAMER_ASSETS = {
     RAIKOU: ASSET_ROOT / "raikou.png",
     ENTEI: ASSET_ROOT / "entei.png",
     SUICUNE: ASSET_ROOT / "suicune.png",
+    LATIAS: ASSET_ROOT / "latias.png",
+    LATIOS: ASSET_ROOT / "latios.png",
 }
 
 NAVY = QColor("#172640")
@@ -79,13 +85,8 @@ WHITE = QColor("#fff9e8")
 MUTED = QColor("#7387a1")
 LIVE = QColor("#63c79a")
 
-# The game's 240x160 region-map canvas has an unused 16 px band on the left,
-# right and top. Paint the actual map area so it is centered inside the frame
-# instead of leaving the visible artwork anchored to the bottom.
-KANTO_MAP_SOURCE_RECT = QRectF(16, 16, 208, 144)
-
 # Window layouts the user can pick between. "clasica" is the panelled dark
-# window; "mapa" is the FireRed town-map screen.
+# window; "mapa" is the GBA town-map screen.
 CLASSIC_UI = "clasica"
 TOWN_MAP_UI = "mapa"
 UI_LAYOUTS = (CLASSIC_UI, TOWN_MAP_UI)
@@ -138,7 +139,7 @@ def _gba_text(
     color: QColor,
     shadow: QColor,
 ) -> None:
-    """FireRed draws every string twice: a shadow one pixel down and right."""
+    """Draw GBA-style text twice: a shadow one pixel down and right."""
     painter.setPen(shadow)
     painter.drawText(rect.translated(1, 1), align, text)
     painter.setPen(color)
@@ -146,7 +147,7 @@ def _gba_text(
 
 
 def _message_box(painter: QPainter, rect: QRectF) -> None:
-    """The FireRed dialogue frame: white slab, blue rim, thin inner rule."""
+    """Draw the GBA dialogue frame: white slab, blue rim, thin inner rule."""
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(0, 0, 0, 60))
     painter.drawRoundedRect(rect.translated(4, 4), 7, 7)
@@ -424,34 +425,46 @@ class InlineIcon(QWidget):
         painter.end()
 
 
-class KantoMap(QWidget):
-    """Paint the visible Kanto map area within its frame with live markers."""
+class RegionMapWidget(QWidget):
+    """Paint the active game's region map with live markers."""
 
     BACKDROP = INK
     FRAME = QColor("#304260")
 
     def __init__(self, parent=None, size: tuple[int, int] = (480, 320)) -> None:
         super().__init__(parent)
-        self.setObjectName("kantoMap")
+        self.setObjectName("regionMap")
         self.setFixedSize(*size)
-        self.setAccessibleName(
-            "Mapa de Kanto con la ubicación del roamer y del jugador"
-        )
-        self._map = QPixmap(str(ASSET_ROOT / "kanto_map.png"))
+        self._map = QPixmap()
+        self._source_rect = QRectF()
+        self._grid_origin = (0, 0)
+        self._game: Game | None = None
+        self._set_game(FIRERED)
         self._snapshot: TrackerSnapshot | None = None
 
     def set_snapshot(self, snapshot: TrackerSnapshot) -> None:
+        self._set_game(snapshot.game)
         self._snapshot = snapshot
         self.update()
 
-    @staticmethod
-    def _point(location: Location) -> tuple[float, float] | None:
+    def _set_game(self, game: Game) -> None:
+        if self._game == game:
+            return
+        self._game = game
+        region_map = game.region_map
+        self._map = QPixmap(str(ASSET_ROOT / region_map.asset_name))
+        self._source_rect = QRectF(*region_map.source_rect)
+        self._grid_origin = region_map.grid_origin
+        self.setAccessibleName(
+            f"Mapa de {region_map.name} con la ubicación del roamer y del jugador"
+        )
+
+    def _point(self, location: Location) -> tuple[float, float] | None:
         if location.map_bounds is None:
             return None
         grid_x, grid_y = location.map_bounds.center
-        # These offsets are the cursor formula from pret/pokefirered's
-        # src/region_map.c: x = 8 * grid_x + 36, y = 8 * grid_y + 36.
-        return (8 * grid_x + 36, 8 * grid_y + 36)
+        origin_x, origin_y = self._grid_origin
+        return (8 * grid_x + origin_x + 4, 8 * grid_y + origin_y + 4)
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
@@ -461,7 +474,7 @@ class KantoMap(QWidget):
         painter.drawPixmap(
             map_rect,
             self._map,
-            KANTO_MAP_SOURCE_RECT,
+            self._source_rect,
         )
 
         painter.save()
@@ -496,13 +509,13 @@ class KantoMap(QWidget):
         target = self._map_rect()
         return (
             target.left()
-            + (point[0] - KANTO_MAP_SOURCE_RECT.left())
+            + (point[0] - self._source_rect.left())
             * target.width()
-            / KANTO_MAP_SOURCE_RECT.width(),
+            / self._source_rect.width(),
             target.top()
-            + (point[1] - KANTO_MAP_SOURCE_RECT.top())
+            + (point[1] - self._source_rect.top())
             * target.height()
-            / KANTO_MAP_SOURCE_RECT.height(),
+            / self._source_rect.height(),
         )
 
     def _route_rect(self, location: Location) -> QRectF | None:
@@ -510,12 +523,14 @@ class KantoMap(QWidget):
         if bounds is None:
             return None
         target = self._map_rect()
-        scale_x = target.width() / KANTO_MAP_SOURCE_RECT.width()
-        scale_y = target.height() / KANTO_MAP_SOURCE_RECT.height()
+        scale_x = target.width() / self._source_rect.width()
+        scale_y = target.height() / self._source_rect.height()
+        origin_x, origin_y = self._grid_origin
         return QRectF(
             target.left()
-            + (8 * bounds.x + 32 - KANTO_MAP_SOURCE_RECT.left()) * scale_x,
-            target.top() + (8 * bounds.y + 32 - KANTO_MAP_SOURCE_RECT.top()) * scale_y,
+            + (8 * bounds.x + origin_x - self._source_rect.left()) * scale_x,
+            target.top()
+            + (8 * bounds.y + origin_y - self._source_rect.top()) * scale_y,
             8 * bounds.width * scale_x,
             8 * bounds.height * scale_y,
         )
@@ -641,7 +656,7 @@ class KantoMap(QWidget):
         )
 
 
-class TownMapWidget(KantoMap):
+class TownMapWidget(RegionMapWidget):
     """The region map on the blue field the game's town map screen uses."""
 
     BACKDROP = QColor("#184878")
@@ -649,7 +664,7 @@ class TownMapWidget(KantoMap):
 
 
 class TownMapView(DragBar):
-    """FireRed town-map layout.
+    """Compact layout inspired by the GBA town-map screens.
 
     The map fills the window and the tracker speaks through the game's
     message box, one page at a time, instead of through standing panels.
@@ -670,7 +685,7 @@ class TownMapView(DragBar):
     def __init__(self, window: TrackerWindow) -> None:
         super().__init__(window)
         self.setFixedSize(*self.SIZE)
-        self.setAccessibleName("Rastreador de roamers sobre el mapa de Kanto")
+        self.setAccessibleName("Rastreador de roamers sobre el mapa regional")
         self._snapshot: TrackerSnapshot | None = None
         self._live = False
         self._page = 0
@@ -754,8 +769,9 @@ class TownMapView(DragBar):
             return ["Buscando el juego…"]
         species = snapshot.roamer.species.name.upper()
         if not snapshot.roamer.active:
+            region = snapshot.game.region_map.name.upper()
             return [
-                f"{species} todavía no recorre KANTO.",
+                f"{species} todavía no recorre {region}.",
                 "El rastreador sigue mirando.",
             ]
         if snapshot.same_area:
@@ -804,13 +820,13 @@ class TownMapView(DragBar):
         _message_box(painter, self.PLATE)
         snapshot = self._snapshot
         if snapshot is None:
-            title, subtitle = "RASTREADOR", "KANTO"
+            title, subtitle = "RASTREADOR", "MAPA REGIONAL"
         else:
             title = snapshot.roamer.species.name.upper()
             subtitle = (
                 snapshot.roamer.location.name.upper()
                 if snapshot.roamer.active
-                else "INACTIVO"
+                else snapshot.game.region_map.name.upper()
             )
             painter.drawPixmap(
                 26,
@@ -905,6 +921,7 @@ class TrackerWindow(QWidget):
         self._pin_controller = resolved_pin_controller
         self._initial_pin_pending = self._pin_controller is not None
         self._displayed_species: RoamerSpecies | None = None
+        self._displayed_game: Game | None = None
         self.setObjectName("shell")
         self.setWindowTitle("Rastreador de roamers")
         self.setWindowIcon(QIcon(str(ASSET_ROOT / "app_icon.png")))
@@ -956,10 +973,10 @@ class TrackerWindow(QWidget):
         mark.setObjectName("brandMark")
         mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
         mark.setFixedSize(25, 25)
-        brand = QLabel("RASTREADOR  /  KANTO")
-        brand.setObjectName("brand")
+        self.brand = QLabel("RASTREADOR  /  MAPA REGIONAL")
+        self.brand.setObjectName("brand")
         title_layout.addWidget(mark)
-        title_layout.addWidget(brand)
+        title_layout.addWidget(self.brand)
         title_layout.addStretch()
 
         self.pin_button = QToolButton()
@@ -1014,7 +1031,7 @@ class TrackerWindow(QWidget):
         connection_row.addWidget(endpoint, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(connection_row)
 
-        self.map = KantoMap()
+        self.map = RegionMapWidget()
         layout.addWidget(self.map, 0, Qt.AlignmentFlag.AlignCenter)
 
         legend = QHBoxLayout()
@@ -1260,6 +1277,7 @@ class TrackerWindow(QWidget):
         )
 
     def show_snapshot(self, snapshot: TrackerSnapshot) -> None:
+        self._show_game(snapshot.game)
         self._show_species(snapshot.roamer.species)
         if self.town_map is not None:
             self.town_map.set_snapshot(snapshot)
@@ -1274,7 +1292,9 @@ class TrackerWindow(QWidget):
         if not snapshot.roamer.active:
             self.match_icon.set_icon("dash", MUTED)
             self.match_text.setText("El roamer no está activo")
-            self.match_hint.setText("Todavía no recorre Kanto")
+            self.match_hint.setText(
+                f"Todavía no recorre {snapshot.game.region_map.name}"
+            )
         elif snapshot.same_area:
             mode = "matched"
             self.match_icon.set_icon("double-ring", GOLD)
@@ -1308,6 +1328,13 @@ class TrackerWindow(QWidget):
         self.match_banner.setProperty("mode", mode)
         self.match_banner.style().unpolish(self.match_banner)
         self.match_banner.style().polish(self.match_banner)
+
+    def _show_game(self, game: Game) -> None:
+        if game == self._displayed_game:
+            return
+        self._displayed_game = game
+        if self.town_map is None:
+            self.brand.setText(f"RASTREADOR  /  {game.region_map.name.upper()}")
 
     def _show_species(self, species: RoamerSpecies) -> None:
         if species == self._displayed_species:
@@ -1408,7 +1435,7 @@ def positive_interval(value: str) -> float:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Ventana flotante para rastrear al roamer de Pokémon FireRed."
+        description="Ventana flotante para rastrear roamers de Pokémon en GBA."
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=positive_port, default=55355)

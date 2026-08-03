@@ -1,19 +1,21 @@
 # Floating roamer tracker
 
-An always-on-top desktop window that reads Pokémon FireRed RAM through
-RetroArch and marks on the Kanto map where the roaming Pokémon and the player
-are. It is read-only: it never modifies RAM or the save file.
+An always-on-top desktop window that reads Pokémon FireRed, LeafGreen or
+Emerald RAM through RetroArch and marks where the roaming Pokémon and the
+player are on the matching Kanto or Hoenn map. It is read-only: it never
+modifies RAM or the save file.
 
-The species is detected automatically for each save. FireRed picks the roamer
-based on the starter: Bulbasaur maps to Entei, Squirtle to Raikou and
-Charmander to Suicune. If the save has already created the roamer, the tracker
-uses the stored species directly; that is why it also works with swapped or
-edited saves.
+The game and species are detected automatically. FireRed and LeafGreen pick
+the roamer based on the starter: Bulbasaur maps to Entei, Squirtle to Raikou
+and Charmander to Suicune. If the save has already created the roamer, the
+tracker uses the stored species directly. Emerald likewise reads the saved
+Latias or Latios choice.
 
 ## Running
 
 1. In RetroArch, enable **Settings > Network > Network Commands**.
-2. Open FireRed with the mGBA core.
+2. Open a supported English FireRed, LeafGreen or Emerald ROM with the mGBA
+   core.
 3. Create the local virtual environment and start the application:
 
    ```bash
@@ -41,11 +43,11 @@ uv run python src/main.py --ui mapa
 `clasica` is the dark panelled window: connection row, map, legend, next-move
 notice, and the roamer and player cards. It is dragged from the top bar.
 
-`mapa` reproduces FireRed's town map screen. The map fills most of the window,
-the top plate shows the species with its sprite and its zone, and everything
-else is spoken through the game's message box, one page every 2.6 seconds, with
-the ▼ arrow blinking the way it does in dialogue. It is a considerably smaller
-window and can be dragged from anywhere.
+`mapa` is inspired by the GBA town map screens. The regional map fills most of
+the window, the top plate shows the species with its sprite and its zone, and
+everything else is spoken through the game's message box, one page every 2.6
+seconds, with the ▼ arrow blinking the way it does in dialogue. It is a
+considerably smaller window and can be dragged from anywhere.
 
 The chosen layout is remembered, so afterwards plain
 `uv run python src/main.py` is enough. Without `--ui` and without a
@@ -56,9 +58,9 @@ unknown value, the tracker falls back to `clasica` instead of failing.
 
 When the player and the roamer are in different zones, the map highlights in
 gold the likely routes after the next normal transition and shows the
-percentage for each one. The calculation replicates FireRed's movement table,
-including the 1-in-16 random jump and the route the game excludes based on the
-player's recent history.
+percentage for each one. The calculation replicates the active game's Kanto
+or Hoenn movement table, including the 1-in-16 random jump and the route the
+game excludes based on the player's recent history.
 
 If a likely route has a quick entrance from the current town, the window
 recommends crossing over to it. In every other case it keeps the probabilities
@@ -163,33 +165,38 @@ Use [.github/RELEASE_TEMPLATE.md](.github/RELEASE_TEMPLATE.md) when drafting
 release notes manually. GitHub's generated-note categories are configured in
 `.github/release.yml`.
 
-## FireRed assets
+## Game assets
 
 `assets/kanto_map.png` and the Raikou, Entei and Suicune sprites are generated
 from the [pret/pokefirered](https://github.com/pret/pokefirered) decompilation.
-The map is rebuilt with the original tileset and `kanto.bin`; the route
-positions use the coordinates from `region_map_sections.json` and the same
-cursor formula as `src/region_map.c`. The generic application icon is also
-generated locally, but it does not use game graphics.
+`assets/hoenn_map.png` and the Latias and Latios sprites come from
+[pret/pokeemerald](https://github.com/pret/pokeemerald). Both maps are rebuilt
+from their original tiles and tilemaps; marker positions use each game's
+region-map section data and cursor formula. The generic application icon is
+also generated locally, but it does not use game graphics.
 
 To regenerate them from a local checkout:
 
 ```bash
 uv sync --group assets
-uv run --group assets python tools/build_assets.py /path/to/pokefirered
+uv run --group assets python tools/build_assets.py \
+  /path/to/pokefirered /path/to/pokeemerald
 ```
 
 The assets belong to their original owners and are included for this personal,
 non-commercial project.
 
-The RAM addresses keep the scope of the original script: FireRed USA/Europe Rev
-1 (BPRE) with the mGBA core. The location is read from the game's live state;
-the species and its active flag are read from whichever save block is loaded at
+The supported ROMs are FireRed USA/Europe Rev 1 (`BPRE`, revision 1), LeafGreen
+USA/Europe Rev 1 (`BPGE`, revision 1), and Emerald USA/Europe (`BPEE`, revision
+0), all with the mGBA core. The tracker checks the ROM header before selecting
+the matching RAM layout. The location is read from the game's live state; the
+species and its active flag are read from whichever save block is loaded at
 that moment. The forecast also reads the live history of the last three
-locations used by the game itself.
+locations used by the game itself. Other revisions and localized ROMs are
+rejected instead of being read with unsafe addresses.
 
 ## License
 
 The tracker code is released under the [MIT license](LICENSE). The graphical
-assets generated from FireRed are not covered by that license; see
+assets generated from the games are not covered by that license; see
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

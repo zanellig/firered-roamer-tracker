@@ -1,4 +1,4 @@
-"""Terminal view of the shared FireRed live roamer tracker."""
+"""Terminal view of the shared GBA live roamer tracker."""
 
 from __future__ import annotations
 
