@@ -17,8 +17,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtGui import QAction  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
+from PySide6.QtWidgets import (  # noqa: E402
+    QApplication,
+    QLabel,
+    QMenu,
+    QWidget,
+)
 
 from main import (  # noqa: E402
     CLASSIC_UI,
@@ -435,13 +441,16 @@ class TrackerWindowDisplayTests(unittest.TestCase):
 
 
 class FakeSettings:
-    """Stand-in for QSettings: stored_ui_layout only ever reads one key."""
+    """Stand-in for QSettings: the tracker only ever touches one key."""
 
     def __init__(self, stored: object) -> None:
         self.stored = stored
 
     def value(self, _key: str) -> object:
         return self.stored
+
+    def setValue(self, _key: str, value: object) -> None:
+        self.stored = value
 
 
 class UiLayoutSettingsTests(unittest.TestCase):
@@ -465,6 +474,77 @@ class UiLayoutSettingsTests(unittest.TestCase):
                 start_worker=False,
                 pin_controller=None,
             )
+
+
+class SettingsMenuTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
+    @staticmethod
+    def layout_actions(window: TrackerWindow) -> list[QAction]:
+        menu = window.settings_button.findChild(QMenu)
+        return [action for action in menu.actions() if action.isCheckable()]
+
+    def test_menu_switches_the_layout_and_remembers_it(self) -> None:
+        settings = FakeSettings(CLASSIC_UI)
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+            settings=settings,
+        )
+        window.show()
+
+        actions = self.layout_actions(window)
+        self.assertEqual(
+            [action.text() for action in actions], ["Clásica", "Mapa regional"]
+        )
+        self.assertEqual([action.isChecked() for action in actions], [True, False])
+
+        actions[1].trigger()
+        QTest.qWait(20)
+
+        self.assertIsInstance(window.town_map, TownMapView)
+        self.assertEqual(window.size().toTuple(), TownMapView.SIZE)
+        self.assertEqual(settings.stored, TOWN_MAP_UI)
+        self.assertEqual(
+            [action.isChecked() for action in self.layout_actions(window)],
+            [False, True],
+        )
+
+        self.layout_actions(window)[0].trigger()
+        QTest.qWait(20)
+
+        self.assertIsNone(window.town_map)
+        self.assertEqual(window.size().toTuple(), (512, 680))
+        self.assertEqual(settings.stored, CLASSIC_UI)
+        window.close()
+
+    def test_switching_keeps_the_state_the_window_is_showing(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            ui=TOWN_MAP_UI,
+            start_worker=False,
+            pin_controller=None,
+            settings=FakeSettings(TOWN_MAP_UI),
+        )
+        window.show()
+        window.show_connection(True)
+        window.show_snapshot(TownMapViewTests.snapshot())
+        window.pin_button.setChecked(False)
+
+        self.layout_actions(window)[0].trigger()
+        QTest.qWait(20)
+
+        self.assertEqual(window.roamer_location.text(), "Ruta 22")
+        self.assertEqual(window.connection_label.text(), "EN VIVO")
+        self.assertFalse(window.pin_button.isChecked())
+        window.close()
 
 
 class TownMapViewTests(unittest.TestCase):

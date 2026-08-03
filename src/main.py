@@ -25,6 +25,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QActionGroup,
     QCloseEvent,
     QColor,
     QFont,
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -90,6 +92,7 @@ LIVE = QColor("#63c79a")
 CLASSIC_UI = "clasica"
 TOWN_MAP_UI = "mapa"
 UI_LAYOUTS = (CLASSIC_UI, TOWN_MAP_UI)
+UI_LAYOUT_NAMES = {CLASSIC_UI: "Clásica", TOWN_MAP_UI: "Mapa regional"}
 UI_SETTINGS_KEY = "ui/layout"
 
 
@@ -103,6 +106,10 @@ def normalize_ui_layout(value: object) -> str | None:
         return None
     candidate = value.strip().casefold()
     return candidate if candidate in UI_LAYOUTS else None
+
+
+def tracker_settings() -> QSettings:
+    return QSettings("roamer-watcher", "tracker")
 
 
 def stored_ui_layout(settings: QSettings) -> str:
@@ -178,6 +185,35 @@ def _pin_icon() -> QIcon:
     icon.addPixmap(_pin_pixmap(NAVY), QIcon.Mode.Normal, QIcon.State.On)
     icon.addPixmap(_pin_pixmap(QColor("#9aabc1")), QIcon.Mode.Normal, QIcon.State.Off)
     return icon
+
+
+def _settings_button(
+    window: TrackerWindow, parent: QWidget | None = None
+) -> QToolButton:
+    """The gear that drops the settings menu, currently the layout selector."""
+    button = QToolButton(parent)
+    button.setObjectName("settingsButton")
+    button.setText("⚙")
+    button.setToolTip("Ajustes")
+
+    menu = QMenu(button)
+    # A disabled entry, not addSection(): a styled QMenu drops a section title.
+    menu.addAction("Diseño de ventana").setEnabled(False)
+    group = QActionGroup(menu)
+    for layout in UI_LAYOUTS:
+        action = menu.addAction(UI_LAYOUT_NAMES[layout])
+        action.setCheckable(True)
+        action.setChecked(layout == window.ui)
+        group.addAction(action)
+        action.triggered.connect(
+            lambda _checked=False, name=layout: window.set_ui_layout(name)
+        )
+    # Popping the menu by hand keeps QToolButton from reserving room for its
+    # own dropdown arrow, so the gear stays square like its neighbours.
+    button.clicked.connect(
+        lambda: menu.popup(button.mapToGlobal(QPoint(0, button.height())))
+    )
+    return button
 
 
 class PinController(Protocol):
@@ -699,9 +735,11 @@ class TownMapView(DragBar):
         self.pin_button.setIcon(_pin_icon())
         self.pin_button.setIconSize(QSize(13, 13))
         self.pin_button.setCheckable(True)
-        self.pin_button.setChecked(True)
+        self.pin_button.setChecked(window.pinned)
         self.pin_button.setToolTip("Mantener siempre visible")
         self.pin_button.toggled.connect(window.set_always_on_top)
+
+        self.settings_button = _settings_button(window, self)
 
         self.close_button = QToolButton(self)
         self.close_button.setObjectName("closeButton")
@@ -723,6 +761,15 @@ class TownMapView(DragBar):
             }
             QToolButton:hover { background: #d8e4f8; }
             QToolButton:checked { background: #a8c0e0; }
+            QMenu {
+                background: #f8f8f8;
+                border: 2px solid #4870b0;
+                color: #404048;
+                font-size: 11px;
+            }
+            QMenu::item { padding: 5px 18px; }
+            QMenu::item:selected { background: #d8e4f8; }
+            QMenu::item:disabled { color: #8890a0; font-size: 9px; }
             """
         )
         self._place_buttons()
@@ -738,7 +785,7 @@ class TownMapView(DragBar):
         """Centre the buttons in the plate and record where the status ends."""
         right = int(self.PLATE.right()) - 12
         middle = int(self.PLATE.center().y())
-        for button in (self.close_button, self.pin_button):
+        for button in (self.close_button, self.pin_button, self.settings_button):
             size = button.sizeHint()
             right -= size.width()
             button.move(right, middle - size.height() // 2)
@@ -905,6 +952,7 @@ class TrackerWindow(QWidget):
         ui: str = CLASSIC_UI,
         start_worker: bool = True,
         pin_controller: PinController | None | _AutoPinController = AUTO_PIN_CONTROLLER,
+        settings: QSettings | None = None,
     ) -> None:
         super().__init__()
         if ui not in UI_LAYOUTS:
@@ -912,6 +960,10 @@ class TrackerWindow(QWidget):
         self.host = host
         self.port = port
         self.ui = ui
+        self.pinned = True
+        self._settings = settings if settings is not None else tracker_settings()
+        self._snapshot: TrackerSnapshot | None = None
+        self._live = False
         if isinstance(pin_controller, _AutoPinController):
             resolved_pin_controller: PinController | None = (
                 KWinPinController.for_current_session()
@@ -933,12 +985,7 @@ class TrackerWindow(QWidget):
         # ponytail: two layouts, so the classic one stays inlined here and the
         # town map is a child view. Extract a ClassicView if a third arrives.
         self.town_map: TownMapView | None = None
-        if ui == TOWN_MAP_UI:
-            self._build_town_map_ui()
-        else:
-            self.setFixedSize(512, 680)
-            self._build_ui()
-            self._apply_styles()
+        self._build_layout()
 
         self.worker = TrackerThread(host, port, interval, self)
         self.worker.snapshot_ready.connect(self.show_snapshot)
@@ -946,11 +993,46 @@ class TrackerWindow(QWidget):
         if start_worker:
             self.worker.start()
 
+    def set_ui_layout(self, ui: str) -> None:
+        """Switch layouts and remember the choice for the next launch."""
+        if ui not in UI_LAYOUTS:
+            raise ValueError("diseño de interfaz desconocido")
+        if ui == self.ui:
+            return
+        self.ui = ui
+        self._settings.setValue(UI_SETTINGS_KEY, ui)
+        # The menu item that asked for this belongs to the widgets about to be
+        # destroyed, so rebuild once Qt is done delivering its signal.
+        QTimer.singleShot(0, self._rebuild_layout)
+
+    def _rebuild_layout(self) -> None:
+        self._build_layout()
+        self._displayed_species = None
+        self._displayed_game = None
+        self.show_connection(self._live)
+        if self._snapshot is not None:
+            self.show_snapshot(self._snapshot)
+
+    def _build_layout(self) -> None:
+        previous = self.layout()
+        if previous is not None:
+            # A widget only ever accepts one layout, so hand the old one and
+            # the widgets it holds to a throwaway parent that takes them down.
+            QWidget().setLayout(previous)
+        self.town_map = None
+        if self.ui == TOWN_MAP_UI:
+            self._build_town_map_ui()
+        else:
+            self.setFixedSize(512, 680)
+            self._build_ui()
+            self._apply_styles()
+
     def _build_town_map_ui(self) -> None:
         self.setStyleSheet("QWidget#shell { background: transparent; }")
         self.setFixedSize(*TownMapView.SIZE)
         self.town_map = TownMapView(self)
         self.pin_button = self.town_map.pin_button
+        self.settings_button = self.town_map.settings_button
         self.map = self.town_map.map
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -979,12 +1061,15 @@ class TrackerWindow(QWidget):
         title_layout.addWidget(self.brand)
         title_layout.addStretch()
 
+        self.settings_button = _settings_button(self)
+        title_layout.addWidget(self.settings_button)
+
         self.pin_button = QToolButton()
         self.pin_button.setObjectName("pinButton")
         self.pin_button.setIcon(_pin_icon())
         self.pin_button.setIconSize(QSize(15, 15))
         self.pin_button.setCheckable(True)
-        self.pin_button.setChecked(True)
+        self.pin_button.setChecked(self.pinned)
         self.pin_button.setToolTip("Mantener siempre visible")
         self.pin_button.toggled.connect(self.set_always_on_top)
         title_layout.addWidget(self.pin_button)
@@ -1225,6 +1310,19 @@ class TrackerWindow(QWidget):
                 background: #f1c84b;
                 border-color: #f1c84b;
             }}
+            QMenu {{
+                background: #172640;
+                border: 1px solid #304260;
+                color: #dce5ec;
+                font-size: 11px;
+            }}
+            QMenu::item {{ padding: 5px 18px; }}
+            QMenu::item:selected {{ background: #263a5b; color: #fff9e8; }}
+            QMenu::item:disabled {{
+                color: #7387a1;
+                font-size: 9px;
+                font-weight: 700;
+            }}
             QLabel#connectionLabel {{
                 color: #dce5ec;
                 font-size: 10px;
@@ -1268,6 +1366,7 @@ class TrackerWindow(QWidget):
         )
 
     def show_connection(self, live: bool) -> None:
+        self._live = live
         if self.town_map is not None:
             self.town_map.set_connection(live)
             return
@@ -1277,6 +1376,7 @@ class TrackerWindow(QWidget):
         )
 
     def show_snapshot(self, snapshot: TrackerSnapshot) -> None:
+        self._snapshot = snapshot
         self._show_game(snapshot.game)
         self._show_species(snapshot.roamer.species)
         if self.town_map is not None:
@@ -1352,6 +1452,7 @@ class TrackerWindow(QWidget):
         self.roamer_legend_label.setText(name)
 
     def set_always_on_top(self, enabled: bool) -> None:
+        self.pinned = enabled
         if self._pin_controller is not None:
             if self._initial_pin_pending:
                 # A click before the first activation changes the requested
@@ -1452,13 +1553,15 @@ def main() -> int:
     app.setApplicationName("Rastreador de roamers")
     app.setQuitOnLastWindowClosed(True)
 
-    settings = QSettings("roamer-watcher", "tracker")
+    settings = tracker_settings()
     if args.ui is None:
         ui = stored_ui_layout(settings)
     else:
         ui = args.ui
         settings.setValue(UI_SETTINGS_KEY, ui)
-    window = TrackerWindow(args.host, args.port, args.interval, ui=ui)
+    window = TrackerWindow(
+        args.host, args.port, args.interval, ui=ui, settings=settings
+    )
     app.aboutToQuit.connect(window.stop_tracking)
 
     # Python's default SIGINT handler raises KeyboardInterrupt wherever the

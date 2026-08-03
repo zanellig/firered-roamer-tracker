@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- A settings menu behind a **⚙** button next to the pin, in both layouts. Its
+  *Diseño de ventana* selector switches between `clasica` and `mapa` while the
+  tracker is running, keeping the window's position and its live connection,
+  and remembers the choice the same way `--ui` does.
+
 ## [0.5.1] - 2026-08-02
 
 ### Changed

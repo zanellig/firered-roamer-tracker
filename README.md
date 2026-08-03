@@ -33,7 +33,9 @@ and stops the reader.
 
 ## Window layouts
 
-There are two layouts, selected with `--ui`:
+There are two layouts. The **⚙** button next to the pin opens the settings
+menu, where *Diseño de ventana* switches between them without restarting. The
+same choice can be made on the command line:
 
 ```bash
 uv run python src/main.py --ui clasica
@@ -49,9 +51,9 @@ everything else is spoken through the game's message box, one page every 2.6
 seconds, with the ▼ arrow blinking the way it does in dialogue. It is a
 considerably smaller window and can be dragged from anywhere.
 
-The chosen layout is remembered, so afterwards plain
-`uv run python src/main.py` is enough. Without `--ui` and without a
-previous choice it uses `clasica`. If the settings file ends up holding an
+The chosen layout is remembered, from the menu as well as from the flag, so
+afterwards plain `uv run python src/main.py` is enough. Without `--ui` and
+without a previous choice it uses `clasica`. If the settings file ends up holding an
 unknown value, the tracker falls back to `clasica` instead of failing.
 
 ## Movement forecast
