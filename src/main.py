@@ -491,6 +491,12 @@ class RegionMapWidget(QWidget):
         self._snapshot = snapshot
         self.update()
 
+    def player_marker(self) -> str:
+        """The letter drawn on the player's marker: the trainer's initial."""
+        if self._snapshot is None:
+            return ""
+        return player_name(self._snapshot)[0].upper()
+
     def _set_game(self, game: Game) -> None:
         if self._game == game:
             return
@@ -533,7 +539,7 @@ class RegionMapWidget(QWidget):
             player = self._point(self._snapshot.player)
             roamer = self._point(self._snapshot.roamer.location)
             marker = self._snapshot.roamer.species.name[0]
-            player_marker = player_name(self._snapshot)[0].upper()
+            player_marker = self.player_marker()
             if self._snapshot.same_area and player is not None:
                 self._draw_match(painter, player, marker, player_marker)
             else:

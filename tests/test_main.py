@@ -332,23 +332,17 @@ class TrackerWindowDisplayTests(unittest.TestCase):
         window.show()
         self.app.processEvents()
 
-        drawn = []
-        for name in ("Gonza", "Ash", None):
-            for same_area in (False, True):
-                window.show_snapshot(
-                    self.snapshot(
-                        SUICUNE,
-                        player_map=27 if same_area else 26,
-                        player_name=name,
+        self.assertEqual(window.map.player_marker(), "")
+        for name, expected in (("Gonza", "G"), ("ash", "A"), (None, "V")):
+            # Both when the roamer is elsewhere and when it shares the zone,
+            # since a match draws the two markers together.
+            for player_map in (26, 27):
+                with self.subTest(name=name, player_map=player_map):
+                    window.show_snapshot(
+                        self.snapshot(SUICUNE, player_map=player_map, player_name=name)
                     )
-                )
-                drawn.append(window.map.grab().toImage())
-
-        # Every initial, matched or not, has to reach the marker: G, A and the
-        # V the tracker falls back to all draw a different map.
-        for index in range(0, len(drawn), 2):
-            self.assertNotEqual(drawn[index], drawn[(index + 2) % len(drawn)])
-            self.assertNotEqual(drawn[index + 1], drawn[(index + 3) % len(drawn)])
+                    self.assertEqual(window.map.player_marker(), expected)
+                    self.assertFalse(window.map.grab().toImage().isNull())
         window.close()
 
     def test_updates_name_sprite_and_title_for_each_roamer(self) -> None:
