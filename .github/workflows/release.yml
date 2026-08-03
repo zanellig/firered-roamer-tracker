@@ -20,13 +20,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: blacksmith-2vcpu-ubuntu-2404
+          - os: ubuntu-latest
             platform: Linux
             artifact: FireRedRoamerTracker-Linux
-          - os: blacksmith-2vcpu-windows-2025
+          - os: windows-latest
             platform: Windows
             artifact: FireRedRoamerTracker-Windows
-          - os: blacksmith-6vcpu-macos-latest
+          - os: macos-latest
             platform: macOS
             artifact: FireRedRoamerTracker-macOS
 
@@ -103,7 +103,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: build
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 

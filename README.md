@@ -145,10 +145,9 @@ usual executable suffix). PyInstaller builds are platform-specific, so create
 each release artifact on the operating system it targets.
 
 Tagged releases build and publish native archives for Linux, Windows and macOS
-through GitHub Actions on Blacksmith runners. Each archive includes the README,
-license and third-party notices; `SHA256SUMS.txt` on the release page verifies
-the downloads. Release history and upgrade notes live in
-[CHANGELOG.md](CHANGELOG.md).
+through GitHub Actions. Each archive includes the README, license and
+third-party notices; `SHA256SUMS.txt` on the release page verifies the downloads.
+Release history and upgrade notes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## Publishing a release
 

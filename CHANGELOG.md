@@ -26,8 +26,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   point and retained the standalone terminal entry point.
 - Added Ruff linting and formatting, Pyright type checking and pre-commit hooks.
 - Added reproducible PyInstaller packaging and tagged GitHub release builds for
-  Linux, Windows and macOS on native Blacksmith runners, including licenses and
-  SHA-256 checksums.
+  Linux, Windows and macOS on native GitHub-hosted runners, including licenses
+  and SHA-256 checksums.
 
 ### Changed
 
