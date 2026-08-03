@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- A *Datos del roamer* panel in the `clasica` layout with the battle identity
+  the game already stores for the roamer: its PID, nature, the six IVs, current
+  and maximum HP, and any status condition it is carrying. The values survive
+  between encounters, so a roamer that fled poisoned or asleep shows it before
+  the next battle starts. The `mapa` layout is unchanged. While the game has
+  not created the roamer yet, every readout stays blank instead of reporting
+  the zeroes still in RAM.
+
 ## [0.7.0] - 2026-08-02
 
 ### Changed

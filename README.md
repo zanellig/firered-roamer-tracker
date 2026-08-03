@@ -43,7 +43,15 @@ uv run python src/main.py --ui mapa
 ```
 
 `clasica` is the dark panelled window: connection row, map, legend, next-move
-notice, and the roamer and player cards. It is dragged from the top bar.
+notice, the roamer and player cards, and the roamer's data panel. It is dragged
+from the top bar.
+
+That last panel shows the battle identity the game keeps for the roamer between
+encounters: its PID, its nature, the six IVs, current and maximum HP, and any
+status condition it is carrying. A roamer that escaped poisoned or asleep still
+shows it there, so the next encounter can be planned before it starts. Until
+the game creates the roamer the readouts stay blank. This panel only exists in
+this layout.
 
 Both layouts call the player by the name chosen in the game, and the marker on
 the map carries that name's initial. Until the game shows a readable name they
@@ -198,8 +206,10 @@ USA/Europe Rev 1 (`BPGE`, revision 1), and Emerald USA/Europe (`BPEE`, revision
 the matching RAM layout. The location is read from the game's live state; the
 species and its active flag are read from whichever save block is loaded at
 that moment, and the trainer's name comes from the personal save block. The
-forecast also reads the live history of the last three locations used by the
-game itself. Other revisions and localized ROMs are
+roamer's stored record is read whole in one request, so its PID, IVs, level, HP
+and status all come from the same game frame; the maximum HP is rebuilt from
+that level and HP IV, since the games never store it. The forecast also reads
+the live history of the last three locations used by the game itself. Other revisions and localized ROMs are
 rejected instead of being read with unsafe addresses.
 
 ## License

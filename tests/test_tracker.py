@@ -8,16 +8,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tracker import (  # noqa: E402
     EMERALD,
-    EMERALD_ROAMER_ACTIVE_OFFSET,
     EMERALD_ROAMER_ADDR,
-    EMERALD_ROAMER_SPECIES_OFFSET,
+    EMERALD_ROAMER_OFFSET,
     EMERALD_SAVE_BLOCK1_PTR_ADDR,
     EMERALD_SAVE_BLOCK2_PTR_ADDR,
     ENTEI,
     FIRERED,
-    FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET,
     FIRERED_LEAFGREEN_ROAMER_ADDR,
-    FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET,
+    FIRERED_LEAFGREEN_ROAMER_OFFSET,
     FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR,
     FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR,
     FIRERED_LEAFGREEN_STARTER_VAR_OFFSET,
@@ -31,6 +29,14 @@ from tracker import (  # noqa: E402
     PLAYER_LOCATION_OFFSET,
     PLAYER_NAME_LENGTH,
     RAIKOU,
+    ROAMER_ACTIVE_FIELD,
+    ROAMER_HP_FIELD,
+    ROAMER_IVS_FIELD,
+    ROAMER_LEVEL_FIELD,
+    ROAMER_PERSONALITY_FIELD,
+    ROAMER_SPECIES_FIELD,
+    ROAMER_STATUS_FIELD,
+    ROAMER_STRUCT_LENGTH,
     ROM_HEADER_ADDR,
     ROM_HEADER_LENGTH,
     SUICUNE,
@@ -38,6 +44,7 @@ from tracker import (  # noqa: E402
     RetroArchNCI,
     TrackerError,
     decode_player_name,
+    decode_status,
     forecast_movement,
     location_for,
     read_snapshot,
@@ -218,12 +225,25 @@ class SnapshotTests(unittest.TestCase):
     def roamer_state(
         species_id: int,
         active: int,
-        species_offset: int,
-        active_offset: int,
+        *,
+        ivs: int = 0,
+        personality: int = 0,
+        hp: int = 0,
+        level: int = 0,
+        status: int = 0,
     ) -> bytes:
-        state = bytearray(active_offset - species_offset + 1)
-        state[:2] = species_id.to_bytes(2, "little")
-        state[-1] = active
+        state = bytearray(ROAMER_STRUCT_LENGTH)
+        state[ROAMER_IVS_FIELD : ROAMER_IVS_FIELD + 4] = ivs.to_bytes(4, "little")
+        state[ROAMER_PERSONALITY_FIELD : ROAMER_PERSONALITY_FIELD + 4] = (
+            personality.to_bytes(4, "little")
+        )
+        state[ROAMER_SPECIES_FIELD : ROAMER_SPECIES_FIELD + 2] = species_id.to_bytes(
+            2, "little"
+        )
+        state[ROAMER_HP_FIELD : ROAMER_HP_FIELD + 2] = hp.to_bytes(2, "little")
+        state[ROAMER_LEVEL_FIELD] = level
+        state[ROAMER_STATUS_FIELD] = status
+        state[ROAMER_ACTIVE_FIELD] = active
         return bytes(state)
 
     @staticmethod
@@ -244,6 +264,7 @@ class SnapshotTests(unittest.TestCase):
         player_name: bytes | None = None,
         species_id: int = SUICUNE.id,
         active: int = 1,
+        roamer_stats: dict[str, int] | None = None,
         starter_id: int | None = None,
         roamer_map: tuple[int, int] = (3, 27),
         player_map: tuple[int, int] = (3, 27),
@@ -257,14 +278,12 @@ class SnapshotTests(unittest.TestCase):
             save_block1_ptr_addr = EMERALD_SAVE_BLOCK1_PTR_ADDR
             save_block2_ptr_addr = EMERALD_SAVE_BLOCK2_PTR_ADDR
             roamer_addr = EMERALD_ROAMER_ADDR
-            species_offset = EMERALD_ROAMER_SPECIES_OFFSET
-            active_offset = EMERALD_ROAMER_ACTIVE_OFFSET
+            roamer_offset = EMERALD_ROAMER_OFFSET
         else:
             save_block1_ptr_addr = FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR
             save_block2_ptr_addr = FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR
             roamer_addr = FIRERED_LEAFGREEN_ROAMER_ADDR
-            species_offset = FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET
-            active_offset = FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET
+            roamer_offset = FIRERED_LEAFGREEN_ROAMER_OFFSET
         values = {
             (ROM_HEADER_ADDR, ROM_HEADER_LENGTH): self.rom_header(game),
             (save_block1_ptr_addr, 4): save_block.to_bytes(4, "little"),
@@ -274,9 +293,9 @@ class SnapshotTests(unittest.TestCase):
             ),
             (save_block + PLAYER_LOCATION_OFFSET, 2): bytes(player_map),
             (
-                save_block + species_offset,
-                active_offset - species_offset + 1,
-            ): self.roamer_state(species_id, active, species_offset, active_offset),
+                save_block + roamer_offset,
+                ROAMER_STRUCT_LENGTH,
+            ): self.roamer_state(species_id, active, **(roamer_stats or {})),
             (roamer_addr - 6, 8): bytes(
                 value
                 for location in (*location_history, roamer_map)
@@ -298,6 +317,58 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot.player.name, "Ruta 9")
         self.assertTrue(snapshot.same_area)
         self.assertIsNotNone(snapshot.forecast)
+
+    def test_reads_the_stored_battle_identity_of_an_active_roamer(self) -> None:
+        # IVs are packed five bits per stat, in the game's internal order:
+        # HP, attack, defense, speed, special attack, special defense.
+        packed_ivs = 31 | 12 << 5 | 5 << 10 | 31 << 15 | 30 << 20 | 20 << 25
+        snapshot = read_snapshot(
+            FakeReader(
+                self.values_for(
+                    roamer_stats={
+                        "ivs": packed_ivs,
+                        "personality": 0x9AB3CDEF,
+                        "hp": 137,
+                        "level": 50,
+                        "status": 0x08,
+                    }
+                )
+            )
+        )
+
+        stats = snapshot.roamer.stats
+        self.assertEqual(f"{stats.personality:08X}", "9AB3CDEF")
+        self.assertEqual(stats.ivs, (31, 12, 5, 30, 20, 31))
+        self.assertEqual(
+            stats.iv_summary, "PS 31 · Atq 12 · Def 5 · AtEsp 30 · DefEsp 20 · Vel 31"
+        )
+        self.assertEqual(stats.nature, "Audaz")  # 0x9AB3CDEF % 25 == 2
+        self.assertEqual(stats.hp, 137)
+        # Suicune's base 100 HP at level 50 with a perfect HP IV.
+        self.assertEqual(stats.max_hp, 175)
+        self.assertEqual(stats.status, "Envenenado")
+
+    def test_keeps_no_stats_before_the_game_creates_the_roamer(self) -> None:
+        snapshot = read_snapshot(
+            FakeReader(self.values_for(species_id=0, active=0, starter_id=1))
+        )
+
+        self.assertEqual(snapshot.roamer.species, RAIKOU)
+        self.assertIsNone(snapshot.roamer.stats)
+
+    def test_names_every_status_a_roamer_can_carry(self) -> None:
+        expected = {
+            0x00: None,
+            0x03: "Dormido",
+            0x08: "Envenenado",
+            0x10: "Quemado",
+            0x20: "Congelado",
+            0x40: "Paralizado",
+            0x80: "Envenenado grave",
+        }
+        for value, name in expected.items():
+            with self.subTest(status=value):
+                self.assertEqual(decode_status(value), name)
 
     def test_detects_leafgreen_and_reuses_the_kanto_rules(self) -> None:
         snapshot = read_snapshot(FakeReader(self.values_for(game=LEAFGREEN)))

@@ -41,6 +41,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -61,6 +62,7 @@ from tracker import (
     Location,
     RetroArchNCI,
     RoamerSpecies,
+    RoamerStats,
     TrackerError,
     TrackerSnapshot,
     read_snapshot,
@@ -97,6 +99,15 @@ UI_SETTINGS_KEY = "ui/layout"
 
 # Stands in for the trainer name until the game has one to read.
 PLAYER_FALLBACK_NAME = "VOS"
+
+# The roamer readouts the classic layout shows, as (key, heading, row, column).
+STAT_FIELDS = (
+    ("pid", "PID", 1, 0),
+    ("nature", "NATURALEZA", 1, 2),
+    ("hp", "PS", 2, 0),
+    ("status", "ESTADO", 2, 2),
+)
+MISSING_STAT = "—"
 
 
 def _format_probability(probability: float) -> str:
@@ -1224,7 +1235,44 @@ class TrackerWindow(QWidget):
             2,
         )
         layout.addLayout(locations)
+        layout.addWidget(self._stats_card())
         root.addWidget(content)
+
+    def _stats_card(self) -> QFrame:
+        """The roamer's battle identity, so a hunter can judge it before the
+        encounter starts."""
+        card = QFrame()
+        card.setObjectName("statsCard")
+        grid = QGridLayout(card)
+        grid.setContentsMargins(11, 8, 11, 8)
+        grid.setHorizontalSpacing(9)
+        grid.setVerticalSpacing(4)
+        heading = QLabel("DATOS DEL ROAMER")
+        heading.setObjectName("cardHeading")
+        grid.addWidget(heading, 0, 0, 1, 4)
+
+        self.stat_values: dict[str, QLabel] = {}
+        for key, title, row, column in STAT_FIELDS:
+            grid.addWidget(self._stat_name(title), row, column)
+            grid.addWidget(self._stat_value(key), row, column + 1)
+        grid.addWidget(self._stat_name("IVS"), 3, 0)
+        grid.addWidget(self._stat_value("ivs"), 3, 1, 1, 3)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        return card
+
+    @staticmethod
+    def _stat_name(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("statName")
+        return label
+
+    def _stat_value(self, key: str) -> QLabel:
+        label = QLabel(MISSING_STAT)
+        label.setObjectName("statValue")
+        self.stat_values[key] = label
+        return label
 
     def _legend(
         self,
@@ -1391,6 +1439,19 @@ class TrackerWindow(QWidget):
             }}
             QFrame#roamerCard {{ border-left: 3px solid #e2554d; }}
             QFrame#playerCard {{ border-left: 3px solid #49b8d0; }}
+            QFrame#statsCard {{
+                background: #172640;
+                border: 1px solid #304260;
+                border-left: 3px solid #f1c84b;
+                border-radius: 8px;
+            }}
+            QLabel#statName {{
+                color: #8296af;
+                font-size: 9px;
+                font-weight: 700;
+                letter-spacing: 1px;
+            }}
+            QLabel#statValue {{ color: #fff9e8; font-size: 11px; font-weight: 700; }}
             QLabel#cardHeading {{
                 color: #8296af;
                 font-size: 9px;
@@ -1419,6 +1480,7 @@ class TrackerWindow(QWidget):
             self.town_map.set_snapshot(snapshot)
             return
         self.map.set_snapshot(snapshot)
+        self._show_stats(snapshot.roamer.stats)
         self.roamer_location.setText(
             snapshot.roamer.location.name if snapshot.roamer.active else "INACTIVO"
         )
@@ -1467,6 +1529,18 @@ class TrackerWindow(QWidget):
         self.match_banner.setProperty("mode", mode)
         self.match_banner.style().unpolish(self.match_banner)
         self.match_banner.style().polish(self.match_banner)
+
+    def _show_stats(self, stats: RoamerStats | None) -> None:
+        """Fill the classic layout's roamer readouts, or blank them out."""
+        if stats is None:
+            for label in self.stat_values.values():
+                label.setText(MISSING_STAT)
+            return
+        self.stat_values["pid"].setText(f"{stats.personality:08X}")
+        self.stat_values["nature"].setText(stats.nature)
+        self.stat_values["hp"].setText(f"{stats.hp} / {stats.max_hp}")
+        self.stat_values["status"].setText(stats.status or "Sin estado")
+        self.stat_values["ivs"].setText(stats.iv_summary)
 
     def _show_game(self, game: Game) -> None:
         if game == self._displayed_game:

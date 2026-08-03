@@ -16,15 +16,24 @@ PLAYER_LOCATION_OFFSET = 0x0004
 # Save block 2 opens with the trainer's name: 7 characters and a terminator.
 PLAYER_NAME_LENGTH = 8
 FIRERED_LEAFGREEN_STARTER_VAR_OFFSET = 0x1062
-FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET = 0x30D8
-FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET = 0x30E3
+FIRERED_LEAFGREEN_ROAMER_OFFSET = 0x30D0
 EMERALD_SAVE_BLOCK1_PTR_ADDR = 0x03005D8C
 EMERALD_SAVE_BLOCK2_PTR_ADDR = 0x03005D90
 EMERALD_ROAMER_ADDR = 0x0203BC86
-EMERALD_ROAMER_SPECIES_OFFSET = 0x31E4
-EMERALD_ROAMER_ACTIVE_OFFSET = 0x31EF
+EMERALD_ROAMER_OFFSET = 0x31DC
 EWRAM_START = 0x02000000
 EWRAM_END = 0x02040000
+
+# Field offsets inside `struct Roamer`, from pret's include/global.h. Reading
+# the struct whole keeps every field from one and the same game frame.
+ROAMER_STRUCT_LENGTH = 0x14
+ROAMER_IVS_FIELD = 0x00
+ROAMER_PERSONALITY_FIELD = 0x04
+ROAMER_SPECIES_FIELD = 0x08
+ROAMER_HP_FIELD = 0x0A
+ROAMER_LEVEL_FIELD = 0x0C
+ROAMER_STATUS_FIELD = 0x0D
+ROAMER_ACTIVE_FIELD = 0x13
 
 
 class TrackerError(RuntimeError):
@@ -96,13 +105,15 @@ class Location:
 class RoamerSpecies:
     id: int
     name: str
+    # Base HP from pret's species_info.h, to rebuild the roamer's maximum HP.
+    base_hp: int
 
 
-RAIKOU = RoamerSpecies(243, "Raikou")
-ENTEI = RoamerSpecies(244, "Entei")
-SUICUNE = RoamerSpecies(245, "Suicune")
-LATIAS = RoamerSpecies(407, "Latias")
-LATIOS = RoamerSpecies(408, "Latios")
+RAIKOU = RoamerSpecies(243, "Raikou", 90)
+ENTEI = RoamerSpecies(244, "Entei", 115)
+SUICUNE = RoamerSpecies(245, "Suicune", 100)
+LATIAS = RoamerSpecies(407, "Latias", 80)
+LATIOS = RoamerSpecies(408, "Latios", 80)
 
 # FireRed and LeafGreen store VAR_STARTER_MON as an index, not a species ID.
 ROAMER_BY_STARTER = {
@@ -112,11 +123,111 @@ ROAMER_BY_STARTER = {
 }
 
 
+# Nature is the personality value modulo the nature count, in the order of
+# pret's constants/pokemon.h.
+NATURES = (
+    "Fuerte",
+    "Huraño",
+    "Audaz",
+    "Firme",
+    "Pícaro",
+    "Osado",
+    "Dócil",
+    "Plácido",
+    "Agitado",
+    "Flojo",
+    "Miedoso",
+    "Activo",
+    "Serio",
+    "Alegre",
+    "Ingenuo",
+    "Modesto",
+    "Afable",
+    "Manso",
+    "Tímido",
+    "Alocado",
+    "Sereno",
+    "Amable",
+    "Grosero",
+    "Cauto",
+    "Raro",
+)
+
+# The packed IV word holds five bits per stat. The shifts are listed in the
+# order the summary screen shows the stats, not in the order they are packed.
+MAX_IV = 0x1F
+IV_NAMES = ("PS", "Atq", "Def", "AtEsp", "DefEsp", "Vel")
+IV_SHIFTS = (0, 5, 10, 20, 25, 15)
+
+# STATUS1 flags from pret's constants/battle.h. Only one of them can be set at
+# a time, and the low three bits count the turns left asleep.
+STATUS_SLEEP_MASK = 0x07
+STATUS_NAMES = (
+    (0x80, "Envenenado grave"),
+    (0x40, "Paralizado"),
+    (0x20, "Congelado"),
+    (0x10, "Quemado"),
+    (0x08, "Envenenado"),
+)
+
+
+def decode_status(value: int) -> str | None:
+    """Name the roamer's stored status condition, or None when it is healthy."""
+    if value & STATUS_SLEEP_MASK:
+        return "Dormido"
+    for flag, name in STATUS_NAMES:
+        if value & flag:
+            return name
+    return None
+
+
+@dataclass(frozen=True)
+class RoamerStats:
+    """The battle identity the game keeps for the roamer between encounters."""
+
+    personality: int
+    # The six IVs, ordered like IV_NAMES.
+    ivs: tuple[int, ...]
+    level: int
+    hp: int
+    max_hp: int
+    # None while the roamer carries no status condition.
+    status: str | None
+
+    @property
+    def nature(self) -> str:
+        return NATURES[self.personality % len(NATURES)]
+
+    @property
+    def iv_summary(self) -> str:
+        return " · ".join(f"{name} {value}" for name, value in zip(IV_NAMES, self.ivs))
+
+
+def read_roamer_stats(data: bytes, species: RoamerSpecies) -> RoamerStats:
+    """Decode one `struct Roamer` into the stats a hunter wants to see."""
+    packed_ivs = int.from_bytes(data[ROAMER_IVS_FIELD : ROAMER_IVS_FIELD + 4], "little")
+    ivs = tuple((packed_ivs >> shift) & MAX_IV for shift in IV_SHIFTS)
+    level = data[ROAMER_LEVEL_FIELD]
+    return RoamerStats(
+        personality=int.from_bytes(
+            data[ROAMER_PERSONALITY_FIELD : ROAMER_PERSONALITY_FIELD + 4], "little"
+        ),
+        ivs=ivs,
+        level=level,
+        hp=int.from_bytes(data[ROAMER_HP_FIELD : ROAMER_HP_FIELD + 2], "little"),
+        # A roamer never gains EVs, so the HP formula reduces to this.
+        max_hp=(2 * species.base_hp + ivs[0]) * level // 100 + level + 10,
+        status=decode_status(data[ROAMER_STATUS_FIELD]),
+    )
+
+
 @dataclass(frozen=True)
 class Roamer:
     species: RoamerSpecies
     location: Location
     active: bool
+    # None until the game creates the roamer, when its stats are still zeroes.
+    stats: RoamerStats | None = None
 
 
 @dataclass(frozen=True)
@@ -505,8 +616,8 @@ class _MemoryProfile:
     save_block1_ptr_addr: int
     save_block2_ptr_addr: int
     roamer_addr: int
-    roamer_species_offset: int
-    roamer_active_offset: int
+    # Where `struct Roamer` starts inside save block 1.
+    roamer_offset: int
     species: tuple[RoamerSpecies, ...]
     starter_var_offset: int | None = None
 
@@ -518,8 +629,7 @@ _FIRERED_PROFILE = _MemoryProfile(
     save_block1_ptr_addr=FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR,
     save_block2_ptr_addr=FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR,
     roamer_addr=FIRERED_LEAFGREEN_ROAMER_ADDR,
-    roamer_species_offset=FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET,
-    roamer_active_offset=FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET,
+    roamer_offset=FIRERED_LEAFGREEN_ROAMER_OFFSET,
     species=(RAIKOU, ENTEI, SUICUNE),
     starter_var_offset=FIRERED_LEAFGREEN_STARTER_VAR_OFFSET,
 )
@@ -530,8 +640,7 @@ _LEAFGREEN_PROFILE = _MemoryProfile(
     save_block1_ptr_addr=FIRERED_LEAFGREEN_SAVE_BLOCK1_PTR_ADDR,
     save_block2_ptr_addr=FIRERED_LEAFGREEN_SAVE_BLOCK2_PTR_ADDR,
     roamer_addr=FIRERED_LEAFGREEN_ROAMER_ADDR,
-    roamer_species_offset=FIRERED_LEAFGREEN_ROAMER_SPECIES_OFFSET,
-    roamer_active_offset=FIRERED_LEAFGREEN_ROAMER_ACTIVE_OFFSET,
+    roamer_offset=FIRERED_LEAFGREEN_ROAMER_OFFSET,
     species=(RAIKOU, ENTEI, SUICUNE),
     starter_var_offset=FIRERED_LEAFGREEN_STARTER_VAR_OFFSET,
 )
@@ -542,8 +651,7 @@ _EMERALD_PROFILE = _MemoryProfile(
     save_block1_ptr_addr=EMERALD_SAVE_BLOCK1_PTR_ADDR,
     save_block2_ptr_addr=EMERALD_SAVE_BLOCK2_PTR_ADDR,
     roamer_addr=EMERALD_ROAMER_ADDR,
-    roamer_species_offset=EMERALD_ROAMER_SPECIES_OFFSET,
-    roamer_active_offset=EMERALD_ROAMER_ACTIVE_OFFSET,
+    roamer_offset=EMERALD_ROAMER_OFFSET,
     species=(LATIAS, LATIOS),
 )
 _MEMORY_PROFILES = {
@@ -650,16 +758,19 @@ def read_snapshot(reader: MemoryReader) -> TrackerSnapshot:
     profile = _read_memory_profile(reader)
     save_block1_ptr = u32le(reader.read_memory(profile.save_block1_ptr_addr, 4))
     if not (
-        EWRAM_START <= save_block1_ptr <= EWRAM_END - profile.roamer_active_offset - 1
+        EWRAM_START
+        <= save_block1_ptr
+        <= EWRAM_END - profile.roamer_offset - ROAMER_STRUCT_LENGTH
     ):
         raise TrackerError("El bloque de guardado activo no está disponible")
 
     player = reader.read_memory(save_block1_ptr + PLAYER_LOCATION_OFFSET, 2)
     roamer_state = reader.read_memory(
-        save_block1_ptr + profile.roamer_species_offset,
-        profile.roamer_active_offset - profile.roamer_species_offset + 1,
+        save_block1_ptr + profile.roamer_offset, ROAMER_STRUCT_LENGTH
     )
-    species_id = int.from_bytes(roamer_state[:2], "little")
+    species_id = int.from_bytes(
+        roamer_state[ROAMER_SPECIES_FIELD : ROAMER_SPECIES_FIELD + 2], "little"
+    )
     species_by_id = {species.id: species for species in profile.species}
     species = species_by_id.get(species_id)
     if species is None and profile.starter_var_offset is not None:
@@ -671,9 +782,7 @@ def read_snapshot(reader: MemoryReader) -> TrackerSnapshot:
     if species is None:
         raise TrackerError("No se pudo identificar el roamer de esta partida")
 
-    active_value = roamer_state[
-        profile.roamer_active_offset - profile.roamer_species_offset
-    ]
+    active_value = roamer_state[ROAMER_ACTIVE_FIELD]
     if active_value not in (0, 1):
         raise TrackerError("El estado del roamer no es válido")
 
@@ -691,6 +800,7 @@ def read_snapshot(reader: MemoryReader) -> TrackerSnapshot:
         species=species,
         location=roamer_location,
         active=bool(active_value),
+        stats=(read_roamer_stats(roamer_state, species) if active_value else None),
     )
     same_area = (
         roamer.active

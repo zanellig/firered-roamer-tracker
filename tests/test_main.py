@@ -9,6 +9,7 @@ import sys
 import textwrap
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,9 +45,19 @@ from tracker import (  # noqa: E402
     RAIKOU,
     SUICUNE,
     Roamer,
+    RoamerStats,
     TrackerSnapshot,
     forecast_movement,
     location_for,
+)
+
+ROAMER_STATS = RoamerStats(
+    personality=0x9AB3CDEF,
+    ivs=(31, 12, 5, 30, 20, 31),
+    level=50,
+    hp=137,
+    max_hp=175,
+    status="Envenenado",
 )
 
 
@@ -221,6 +232,7 @@ class TrackerWindowDisplayTests(unittest.TestCase):
         player_map: int = 26,
         history_exclusion_map: int = 20,
         player_name: str | None = None,
+        stats: RoamerStats | None = None,
     ) -> TrackerSnapshot:
         roamer_location = location_for(3, roamer_map)
         player_location = location_for(3, player_map)
@@ -236,7 +248,7 @@ class TrackerWindowDisplayTests(unittest.TestCase):
         )
         return TrackerSnapshot(
             game=FIRERED,
-            roamer=Roamer(species, roamer_location, active),
+            roamer=Roamer(species, roamer_location, active, stats),
             player=player_location,
             same_area=same_area,
             forecast=forecast,
@@ -412,6 +424,45 @@ class TrackerWindowDisplayTests(unittest.TestCase):
         self.assertEqual(window.roamer_location.text(), "INACTIVO")
         self.assertEqual(window.match_text.text(), "El roamer no está activo")
         self.assertFalse(window.match_banner.property("matched"))
+        window.close()
+
+    def test_shows_the_roamer_battle_identity(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+
+        window.show_snapshot(self.snapshot(SUICUNE, stats=ROAMER_STATS))
+        self.assertIsNotNone(window.findChild(QWidget, "statsCard"))
+        self.assertEqual(window.stat_values["pid"].text(), "9AB3CDEF")
+        self.assertEqual(window.stat_values["nature"].text(), "Audaz")
+        self.assertEqual(window.stat_values["hp"].text(), "137 / 175")
+        self.assertEqual(window.stat_values["status"].text(), "Envenenado")
+        self.assertIn("PS 31", window.stat_values["ivs"].text())
+
+        # An inactive roamer has no stored identity yet, so nothing is claimed.
+        window.show_snapshot(self.snapshot(ENTEI, active=False))
+        for key in ("pid", "nature", "hp", "status", "ivs"):
+            with self.subTest(stat=key):
+                self.assertEqual(window.stat_values[key].text(), "—")
+        window.close()
+
+    def test_healthy_roamer_reads_as_having_no_status(self) -> None:
+        window = TrackerWindow(
+            "127.0.0.1",
+            55355,
+            0.2,
+            start_worker=False,
+            pin_controller=None,
+        )
+        healthy = replace(ROAMER_STATS, status=None)
+
+        window.show_snapshot(self.snapshot(SUICUNE, stats=healthy))
+
+        self.assertEqual(window.stat_values["status"].text(), "Sin estado")
         window.close()
 
     def test_keeps_probabilities_without_recommending_a_reset(self) -> None:
@@ -619,7 +670,9 @@ class TownMapViewTests(unittest.TestCase):
         player_location = location_for(3, player_map)
         return TrackerSnapshot(
             game=FIRERED,
-            roamer=Roamer(SUICUNE, roamer_location, active),
+            roamer=Roamer(
+                SUICUNE, roamer_location, active, ROAMER_STATS if active else None
+            ),
             player=player_location,
             same_area=active and roamer_map == player_map,
             player_name=player_name,
@@ -639,6 +692,14 @@ class TownMapViewTests(unittest.TestCase):
 
         self.assertIsInstance(window.town_map, TownMapView)
         self.assertEqual(window.size().toTuple(), TownMapView.SIZE)
+        window.close()
+
+    def test_leaves_the_roamer_stats_to_the_classic_layout(self) -> None:
+        window = self.town_map_window()
+        window.show_snapshot(self.snapshot())
+
+        self.assertIsNone(window.findChild(QWidget, "statsCard"))
+        self.assertNotIn("9AB3CDEF", " ".join(window.town_map.pages()))
         window.close()
 
     def test_classic_layout_stays_the_default(self) -> None:
