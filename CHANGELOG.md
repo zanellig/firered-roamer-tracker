@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-02
+
 ### Added
 
 - A settings menu behind a **⚙** button next to the pin, in both layouts. Its
@@ -117,7 +119,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - The RAM addresses target FireRed USA/Europe Rev 1 (BPRE) running in mGBA
   through RetroArch's Network Command Interface.
 
-[Unreleased]: https://github.com/zanellig/roamer-tracker/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/zanellig/roamer-tracker/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/zanellig/roamer-tracker/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/zanellig/roamer-tracker/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/zanellig/roamer-tracker/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/zanellig/roamer-tracker/releases/tag/v0.4.0
