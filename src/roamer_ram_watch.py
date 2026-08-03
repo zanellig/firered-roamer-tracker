@@ -6,10 +6,7 @@ import argparse
 import sys
 import time
 
-if __package__:
-    from .tracker import RetroArchNCI, TrackerError, read_snapshot
-else:
-    from tracker import RetroArchNCI, TrackerError, read_snapshot
+from tracker import RetroArchNCI, TrackerError, read_snapshot
 
 
 def main() -> int:

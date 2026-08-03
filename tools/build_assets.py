@@ -7,7 +7,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "assets"
 
@@ -64,7 +63,9 @@ def build_assets(source: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("pokefirered", type=Path, help="Ruta al checkout de pret/pokefirered")
+    parser.add_argument(
+        "pokefirered", type=Path, help="Ruta al checkout de pret/pokefirered"
+    )
     args = parser.parse_args()
     try:
         build_assets(args.pokefirered)

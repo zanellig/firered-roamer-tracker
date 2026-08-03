@@ -19,7 +19,7 @@ edited saves.
    ```bash
    cd roamer_watcher
    uv sync
-   uv run python roamer_tracker.py
+   uv run python src/main.py
    ```
 
 The window can be dragged from the top bar and stays above the others by
@@ -28,6 +28,29 @@ yet or the connection drops, the tracker keeps retrying instead of exiting.
 `Ctrl+C` from the terminal closes the window and the RAM reader without
 printing a traceback. The **×** button also closes the application completely
 and stops the reader.
+
+## Window layouts
+
+There are two layouts, selected with `--ui`:
+
+```bash
+uv run python src/main.py --ui clasica
+uv run python src/main.py --ui mapa
+```
+
+`clasica` is the dark panelled window: connection row, map, legend, next-move
+notice, and the roamer and player cards. It is dragged from the top bar.
+
+`mapa` reproduces FireRed's town map screen. The map fills most of the window,
+the top plate shows the species with its sprite and its zone, and everything
+else is spoken through the game's message box, one page every 2.6 seconds, with
+the ▼ arrow blinking the way it does in dialogue. It is a considerably smaller
+window and can be dragged from anywhere.
+
+The chosen layout is remembered, so afterwards plain
+`uv run python src/main.py` is enough. Without `--ui` and without a
+previous choice it uses `clasica`. If the settings file ends up holding an
+unknown value, the tracker falls back to `clasica` instead of failing.
 
 ## Movement forecast
 
@@ -56,21 +79,21 @@ The default address is `127.0.0.1:55355`. It can be changed along with the read
 frequency:
 
 ```bash
-uv run python roamer_tracker.py --host 127.0.0.1 --port 55355 --interval 0.20
+uv run python src/main.py --host 127.0.0.1 --port 55355 --interval 0.20
 ```
 
 To keep using the terminal view:
 
 ```bash
-uv run python roamer_ram_watch.py
+uv run python src/roamer_ram_watch.py
 ```
 
 ## Dependencies
 
 The application uses Python 3 and PySide 6. `uv sync` creates `.venv` inside
-this folder and installs PySide there; it does not install packages into the
-global Python. Activating the environment is not necessary because `uv run`
-selects it automatically.
+this folder and installs the runtime and development dependencies there; it
+does not install packages into the global Python. Activating the environment
+is not necessary because `uv run` selects it automatically.
 
 ```bash
 uv sync
@@ -78,6 +101,67 @@ uv sync
 
 Pillow is only used to regenerate the bundled PNGs. It is not needed to run the
 tracker and lives in the optional `assets` group.
+
+## Development checks
+
+The GUI entry point and the rest of the application source live in `src/`.
+Ruff checks and formats the Python files, while Pyright type-checks the runtime
+source:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run pyright
+uv run python -m unittest discover -s tests -v
+```
+
+Install the repository's pre-commit hooks once per checkout:
+
+```bash
+uv run pre-commit install
+```
+
+Every commit then runs Ruff's safe fixes before the formatter and finishes with
+Pyright. To run the same hooks over the whole checkout manually:
+
+```bash
+uv run pre-commit run --all-files
+```
+
+Ruff can rewrite files during the hook, so review and stage those changes before
+committing again.
+
+## Building the desktop application
+
+The PyInstaller specification builds a single windowed executable and bundles
+the map, sprites and application icon:
+
+```bash
+uv run pyinstaller --clean --noconfirm FireRedRoamerTracker.spec
+```
+
+The artifact is written to `dist/FireRedRoamerTracker` (with the platform's
+usual executable suffix). PyInstaller builds are platform-specific, so create
+each release artifact on the operating system it targets.
+
+Tagged releases build and publish native archives for Linux, Windows and macOS
+through GitHub Actions. Each archive includes the README, license and third-party
+notices; `SHA256SUMS.txt` on the release page verifies the downloads. Release
+history and upgrade notes live in [CHANGELOG.md](CHANGELOG.md).
+
+## Publishing a release
+
+1. Move the completed entries from `Unreleased` into a dated version section in
+   `CHANGELOG.md`.
+2. Update the project version in `pyproject.toml` and refresh `uv.lock`.
+3. Commit and push the release changes.
+4. Create and push the matching `vX.Y.Z` tag.
+5. Confirm the `Release native applications` workflow publishes all three
+   archives and `SHA256SUMS.txt`.
+
+Use [.github/RELEASE_TEMPLATE.md](.github/RELEASE_TEMPLATE.md) when drafting
+release notes manually. GitHub's generated-note categories are configured in
+`.github/release.yml`.
 
 ## FireRed assets
 
@@ -103,12 +187,6 @@ The RAM addresses keep the scope of the original script: FireRed USA/Europe Rev
 the species and its active flag are read from whichever save block is loaded at
 that moment. The forecast also reads the live history of the last three
 locations used by the game itself.
-
-## Testing
-
-```bash
-uv run python -m unittest discover -s tests -v
-```
 
 ## License
 

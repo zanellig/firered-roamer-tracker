@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import socket
 import string
+from dataclasses import dataclass
 from typing import Callable, Protocol
-
 
 ROAMER_ADDR = 0x0203F3AE
 LOCATION_HISTORY_ADDR = ROAMER_ADDR - 6
@@ -58,15 +57,12 @@ RAIKOU = RoamerSpecies(243, "Raikou")
 ENTEI = RoamerSpecies(244, "Entei")
 SUICUNE = RoamerSpecies(245, "Suicune")
 
-ROAMER_SPECIES = {
-    species.id: species
-    for species in (RAIKOU, ENTEI, SUICUNE)
-}
+ROAMER_SPECIES = {species.id: species for species in (RAIKOU, ENTEI, SUICUNE)}
 
 # FireRed stores VAR_STARTER_MON as an index, not a species ID.
 ROAMER_BY_STARTER = {
-    0: ENTEI,    # Bulbasaur
-    1: RAIKOU,   # Squirtle
+    0: ENTEI,  # Bulbasaur
+    1: RAIKOU,  # Squirtle
     2: SUICUNE,  # Charmander
 }
 
@@ -209,17 +205,15 @@ ROAMER_ROUTE_GRAPH = {
 }
 ROAMER_ROUTE_MAPS = tuple(ROAMER_ROUTE_GRAPH)
 RANDOM_RELOCATION_CHANCE = 1 / 16
-RANDOM_ROUTE_PROBABILITY = RANDOM_RELOCATION_CHANCE / (
-    len(ROAMER_ROUTE_MAPS) - 1
-)
+RANDOM_ROUTE_PROBABILITY = RANDOM_RELOCATION_CHANCE / (len(ROAMER_ROUTE_MAPS) - 1)
 
 # Routes with an immediate open-border crossing from each hunting city.
 _HUNTING_ROUTES_BY_CITY = {
-    0: (19,),      # Pallet Town -> Route 1
+    0: (19,),  # Pallet Town -> Route 1
     1: (19, 20),  # Viridian City -> Route 1 / Route 2
-    3: (23,),      # Cerulean City -> Route 5
-    4: (26,),      # Lavender Town -> Route 8
-    5: (24,),      # Vermilion City -> Route 6
+    3: (23,),  # Cerulean City -> Route 5
+    4: (26,),  # Lavender Town -> Route 8
+    5: (24,),  # Vermilion City -> Route 6
 }
 
 
@@ -241,16 +235,11 @@ def forecast_movement(
     next_history_exclusion: Location,
 ) -> MovementForecast | None:
     """Calculate the next-transition distribution and any direct interception."""
-    if (
-        roamer_location.group != 3
-        or roamer_location.number not in ROAMER_ROUTE_GRAPH
-    ):
+    if roamer_location.group != 3 or roamer_location.number not in ROAMER_ROUTE_GRAPH:
         return None
 
     excluded_map = (
-        next_history_exclusion.number
-        if next_history_exclusion.group == 3
-        else None
+        next_history_exclusion.number if next_history_exclusion.group == 3 else None
     )
     neighbors = tuple(
         map_number
@@ -266,24 +255,17 @@ def forecast_movement(
         for map_number in neighbors
     )
 
-    chance_by_route = {
-        chance.location.number: chance
-        for chance in likely_routes
-    }
+    chance_by_route = {chance.location.number: chance for chance in likely_routes}
     hunting_routes = (
         _HUNTING_ROUTES_BY_CITY.get(player_location.number, ())
         if player_location.group == 3
         else ()
     )
     actionable = tuple(
-        chance_by_route[route]
-        for route in hunting_routes
-        if route in chance_by_route
+        chance_by_route[route] for route in hunting_routes if route in chance_by_route
     )
     best_chance = (
-        max(actionable, key=lambda chance: chance.probability)
-        if actionable
-        else None
+        max(actionable, key=lambda chance: chance.probability) if actionable else None
     )
 
     return MovementForecast(

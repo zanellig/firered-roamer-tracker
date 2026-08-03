@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import socket
 import sys
-from pathlib import Path
 import unittest
+from pathlib import Path
 
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tracker import (  # noqa: E402
     ENTEI,
@@ -14,9 +12,9 @@ from tracker import (  # noqa: E402
     LOCATION_HISTORY_ADDR,
     PLAYER_LOCATION_OFFSET,
     RAIKOU,
-    ROAMER_ROUTE_MAPS,
-    ROAMER_ADDR,
     ROAMER_ACTIVE_OFFSET,
+    ROAMER_ADDR,
+    ROAMER_ROUTE_MAPS,
     ROAMER_SPECIES_OFFSET,
     SAVE_BLOCK1_PTR_ADDR,
     STARTER_VAR_OFFSET,
@@ -93,12 +91,11 @@ class MovementForecastTests(unittest.TestCase):
         )
         for chance in forecast.likely_routes:
             self.assertAlmostEqual(chance.probability, 181 / 384)
-        random_only_routes = len(ROAMER_ROUTE_MAPS) - 1 - len(
-            forecast.likely_routes
+        random_only_routes = len(ROAMER_ROUTE_MAPS) - 1 - len(forecast.likely_routes)
+        represented_probability = (
+            sum(chance.probability for chance in forecast.likely_routes)
+            + random_only_routes * forecast.random_route_probability
         )
-        represented_probability = sum(
-            chance.probability for chance in forecast.likely_routes
-        ) + random_only_routes * forecast.random_route_probability
         self.assertAlmostEqual(represented_probability, 1.0)
 
     def test_excludes_the_player_map_from_two_transitions_ago(self) -> None:
@@ -115,7 +112,7 @@ class MovementForecastTests(unittest.TestCase):
     def test_recommends_an_immediate_cross_from_a_matching_hunt_city(self) -> None:
         forecast = forecast_movement(
             location_for(3, 23),  # Route 5 can move to Route 6.
-            location_for(3, 5),   # Vermilion City
+            location_for(3, 5),  # Vermilion City
             location_for(3, 19),
         )
 
@@ -135,7 +132,7 @@ class MovementForecastTests(unittest.TestCase):
     def test_viridian_interception_accounts_for_the_random_hop(self) -> None:
         forecast = forecast_movement(
             location_for(3, 41),  # Route 22
-            location_for(3, 1),   # Viridian City
+            location_for(3, 1),  # Viridian City
             location_for(3, 19),  # Entered Viridian from Route 1
         )
 
@@ -230,9 +227,7 @@ class SnapshotTests(unittest.TestCase):
                 self.assertFalse(snapshot.roamer.active)
 
     def test_same_numbers_in_other_groups_are_not_a_match(self) -> None:
-        reader = FakeReader(
-            self.values_for(roamer_map=(4, 27), player_map=(4, 27))
-        )
+        reader = FakeReader(self.values_for(roamer_map=(4, 27), player_map=(4, 27)))
         self.assertFalse(read_snapshot(reader).same_area)
 
     def test_reads_game_history_to_exclude_a_likely_route(self) -> None:
@@ -257,9 +252,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertFalse(read_snapshot(reader).same_area)
 
     def test_rejects_unknown_roamer_and_starter(self) -> None:
-        reader = FakeReader(
-            self.values_for(species_id=999, active=1, starter_id=999)
-        )
+        reader = FakeReader(self.values_for(species_id=999, active=1, starter_id=999))
         with self.assertRaisesRegex(TrackerError, "identificar el roamer"):
             read_snapshot(reader)
 

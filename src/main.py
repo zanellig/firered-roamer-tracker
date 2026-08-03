@@ -3,30 +3,34 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
-from pathlib import Path
 import signal
+import sys
+from functools import lru_cache
+from pathlib import Path
 from threading import Event
-from typing import Protocol
+from typing import Protocol, cast
 
 from PySide6.QtCore import (
     QEvent,
     QPoint,
     QPointF,
     QRectF,
+    QSettings,
     QSize,
     Qt,
     QThread,
     QTimer,
     Signal,
 )
-from PySide6.QtDBus import QDBusConnection, QDBusInterface, QDBusMessage
 from PySide6.QtGui import (
-    QColor,
     QCloseEvent,
+    QColor,
     QFont,
     QFontDatabase,
     QIcon,
+    QLinearGradient,
     QMouseEvent,
     QPainter,
     QPen,
@@ -44,34 +48,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-if __package__:
-    from .tracker import (
-        ENTEI,
-        Location,
-        RAIKOU,
-        RoamerSpecies,
-        SUICUNE,
-        RetroArchNCI,
-        TrackerError,
-        TrackerSnapshot,
-        read_snapshot,
-    )
-else:
-    from tracker import (
-        ENTEI,
-        Location,
-        RAIKOU,
-        RoamerSpecies,
-        SUICUNE,
-        RetroArchNCI,
-        TrackerError,
-        TrackerSnapshot,
-        read_snapshot,
-    )
+from tracker import (
+    ENTEI,
+    RAIKOU,
+    SUICUNE,
+    Location,
+    RetroArchNCI,
+    RoamerSpecies,
+    TrackerError,
+    TrackerSnapshot,
+    read_snapshot,
+)
 
-
-APP_ROOT = Path(__file__).resolve().parent
-ASSET_ROOT = APP_ROOT / "assets"
+SOURCE_ROOT = Path(__file__).resolve().parent
+ASSET_ROOT = SOURCE_ROOT / "assets"
+if not ASSET_ROOT.is_dir():
+    ASSET_ROOT = SOURCE_ROOT.parent / "assets"
 ROAMER_ASSETS = {
     RAIKOU: ASSET_ROOT / "raikou.png",
     ENTEI: ASSET_ROOT / "entei.png",
@@ -84,10 +76,86 @@ CYAN = QColor("#49b8d0")
 CORAL = QColor("#e2554d")
 GOLD = QColor("#f1c84b")
 WHITE = QColor("#fff9e8")
+MUTED = QColor("#7387a1")
+LIVE = QColor("#63c79a")
+
+# The game's 240x160 region-map canvas has an unused 16 px band on the left,
+# right and top. Paint the actual map area so it is centered inside the frame
+# instead of leaving the visible artwork anchored to the bottom.
+KANTO_MAP_SOURCE_RECT = QRectF(16, 16, 208, 144)
+
+# Window layouts the user can pick between. "clasica" is the panelled dark
+# window; "mapa" is the FireRed town-map screen.
+CLASSIC_UI = "clasica"
+TOWN_MAP_UI = "mapa"
+UI_LAYOUTS = (CLASSIC_UI, TOWN_MAP_UI)
+UI_SETTINGS_KEY = "ui/layout"
 
 
 def _format_probability(probability: float) -> str:
     return f"{probability:.1%}".replace(".", ",")
+
+
+def normalize_ui_layout(value: object) -> str | None:
+    """Return a known layout name, or None when the value is not one."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().casefold()
+    return candidate if candidate in UI_LAYOUTS else None
+
+
+def stored_ui_layout(settings: QSettings) -> str:
+    """Read the remembered layout, falling back when the file was edited."""
+    stored = normalize_ui_layout(settings.value(UI_SETTINGS_KEY))
+    return CLASSIC_UI if stored is None else stored
+
+
+@lru_cache(maxsize=8)
+def _scaled_sprite(path: str, size: int) -> QPixmap:
+    """Cache scaled roamer sprites so repainting never touches the disk."""
+    return QPixmap(path).scaled(
+        size,
+        size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.FastTransformation,
+    )
+
+
+def _pixel_font(size: int, *, bold: bool = False) -> QFont:
+    """The monospaced, unsmoothed face the GBA interface is drawn with."""
+    font = QFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family())
+    font.setPixelSize(size)
+    font.setBold(bold)
+    font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+    return font
+
+
+def _gba_text(
+    painter: QPainter,
+    rect: QRectF,
+    align: Qt.AlignmentFlag,
+    text: str,
+    color: QColor,
+    shadow: QColor,
+) -> None:
+    """FireRed draws every string twice: a shadow one pixel down and right."""
+    painter.setPen(shadow)
+    painter.drawText(rect.translated(1, 1), align, text)
+    painter.setPen(color)
+    painter.drawText(rect, align, text)
+
+
+def _message_box(painter: QPainter, rect: QRectF) -> None:
+    """The FireRed dialogue frame: white slab, blue rim, thin inner rule."""
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(0, 0, 0, 60))
+    painter.drawRoundedRect(rect.translated(4, 4), 7, 7)
+    painter.setBrush(QColor("#f8f8f8"))
+    painter.setPen(QPen(QColor("#4870b0"), 3))
+    painter.drawRoundedRect(rect, 7, 7)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(QPen(QColor("#a8c0e0"), 1))
+    painter.drawRoundedRect(rect.adjusted(5, 5, -5, -5), 4, 4)
 
 
 def _pin_pixmap(color: QColor) -> QPixmap:
@@ -115,33 +183,57 @@ class PinController(Protocol):
     def toggle(self) -> bool: ...
 
 
+class _DBusReply(Protocol):
+    def type(self) -> object: ...
+
+    def arguments(self) -> list[object]: ...
+
+
+class _DBusInterface(Protocol):
+    def call(self, method: str, *arguments: object) -> _DBusReply: ...
+
+
 class KWinPinController:
     """Toggle KWin's real keep-above state on the active Wayland window."""
 
     SHORTCUT = "Window Above Other Windows"
 
-    def __init__(self, interface: QDBusInterface) -> None:
+    def __init__(self, interface: _DBusInterface, reply_message_type: object) -> None:
         self.interface = interface
+        self.reply_message_type = reply_message_type
 
     @classmethod
     def for_current_session(cls) -> KWinPinController | None:
+        if sys.platform != "linux":
+            return None
         app = QApplication.instance()
         desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").casefold()
-        if app is None or app.platformName() != "wayland" or "kde" not in desktop:
+        if (
+            not isinstance(app, QApplication)
+            or app.platformName() != "wayland"
+            or "kde" not in desktop
+        ):
             return None
-        interface = QDBusInterface(
+        try:
+            qt_dbus = importlib.import_module("PySide6.QtDBus")
+        except ImportError:
+            return None
+        interface = qt_dbus.QDBusInterface(
             "org.kde.kglobalaccel",
             "/component/kwin",
             "org.kde.kglobalaccel.Component",
-            QDBusConnection.sessionBus(),
+            qt_dbus.QDBusConnection.sessionBus(),
         )
         if not interface.isValid():
             return None
-        return cls(interface)
+        return cls(
+            cast(_DBusInterface, interface),
+            qt_dbus.QDBusMessage.MessageType.ReplyMessage,
+        )
 
     def toggle(self) -> bool:
         shortcuts_reply = self.interface.call("shortcutNames")
-        if shortcuts_reply.type() != QDBusMessage.MessageType.ReplyMessage:
+        if shortcuts_reply.type() != self.reply_message_type:
             return False
         arguments = shortcuts_reply.arguments()
         if (
@@ -151,7 +243,7 @@ class KWinPinController:
         ):
             return False
         reply = self.interface.call("invokeShortcut", self.SHORTCUT)
-        return reply.type() == QDBusMessage.MessageType.ReplyMessage
+        return reply.type() == self.reply_message_type
 
 
 class _AutoPinController:
@@ -228,7 +320,10 @@ class DragBar(QFrame):
         if self._system_move_active:
             event.accept()
             return
-        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+        if (
+            self._drag_offset is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+        ):
             self.window().move(event.globalPosition().toPoint() - self._drag_offset)
             event.accept()
             return
@@ -240,14 +335,108 @@ class DragBar(QFrame):
         super().mouseReleaseEvent(event)
 
 
-class KantoMap(QWidget):
-    """Paint the original 240x160 map at exact 2x scale with live markers."""
+class InlineIcon(QWidget):
+    """Paint a small UI symbol around its geometric center, not a text baseline."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(
+        self,
+        kind: str,
+        color: QColor,
+        size: int,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._kind = kind
+        self._color = QColor(color)
+        self.setFixedSize(size, size)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def set_icon(self, kind: str, color: QColor | None = None) -> None:
+        self._kind = kind
+        if color is not None:
+            self._color = QColor(color)
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        center = QPointF(self.width() / 2, self.height() / 2)
+        radius = min(self.width(), self.height()) * 0.32
+
+        pen = QPen(self._color, 1.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if self._kind == "dot":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._color)
+            painter.drawEllipse(center, radius, radius)
+        elif self._kind == "diamond":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._color)
+            painter.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(center.x(), center.y() - radius),
+                        QPointF(center.x() + radius, center.y()),
+                        QPointF(center.x(), center.y() + radius),
+                        QPointF(center.x() - radius, center.y()),
+                    ]
+                )
+            )
+        elif self._kind == "route":
+            painter.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(center.x() - radius, center.y() + radius * 0.45),
+                        QPointF(center.x() - radius * 0.55, center.y() - radius * 0.45),
+                        QPointF(center.x() + radius, center.y() - radius * 0.45),
+                        QPointF(center.x() + radius * 0.55, center.y() + radius * 0.45),
+                    ]
+                )
+            )
+        elif self._kind == "double-ring":
+            painter.drawEllipse(center, radius, radius)
+            painter.drawEllipse(center, radius * 0.42, radius * 0.42)
+        elif self._kind == "arrow":
+            painter.drawLine(
+                QPointF(center.x() - radius * 0.75, center.y() + radius * 0.75),
+                QPointF(center.x() + radius * 0.75, center.y() - radius * 0.75),
+            )
+            painter.drawLine(
+                QPointF(center.x() - radius * 0.05, center.y() - radius * 0.75),
+                QPointF(center.x() + radius * 0.75, center.y() - radius * 0.75),
+            )
+            painter.drawLine(
+                QPointF(center.x() + radius * 0.75, center.y() - radius * 0.75),
+                QPointF(center.x() + radius * 0.75, center.y() + radius * 0.05),
+            )
+        elif self._kind == "dash":
+            painter.drawLine(
+                QPointF(center.x() - radius * 0.75, center.y()),
+                QPointF(center.x() + radius * 0.75, center.y()),
+            )
+        else:
+            painter.drawEllipse(center, radius, radius)
+
+        painter.end()
+
+
+class KantoMap(QWidget):
+    """Paint the visible Kanto map area within its frame with live markers."""
+
+    BACKDROP = INK
+    FRAME = QColor("#304260")
+
+    def __init__(self, parent=None, size: tuple[int, int] = (480, 320)) -> None:
         super().__init__(parent)
         self.setObjectName("kantoMap")
-        self.setFixedSize(480, 320)
-        self.setAccessibleName("Mapa de Kanto con la ubicación del roamer y del jugador")
+        self.setFixedSize(*size)
+        self.setAccessibleName(
+            "Mapa de Kanto con la ubicación del roamer y del jugador"
+        )
         self._map = QPixmap(str(ASSET_ROOT / "kanto_map.png"))
         self._snapshot: TrackerSnapshot | None = None
 
@@ -267,13 +456,16 @@ class KantoMap(QWidget):
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
-        painter.fillRect(self.rect(), INK)
+        painter.fillRect(self.rect(), self.BACKDROP)
+        map_rect = self._map_rect()
         painter.drawPixmap(
-            QRectF(self.rect()),
+            map_rect,
             self._map,
-            QRectF(self._map.rect()),
+            KANTO_MAP_SOURCE_RECT,
         )
 
+        painter.save()
+        painter.setClipRect(map_rect)
         if self._snapshot is not None:
             if (
                 self._snapshot.roamer.active
@@ -291,23 +483,39 @@ class KantoMap(QWidget):
                     self._draw_marker(painter, roamer, CORAL, marker, diamond=True)
                 if player is not None:
                     self._draw_marker(painter, player, CYAN, "V")
+        painter.restore()
 
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(QColor("#304260"), 2))
+        painter.setPen(QPen(self.FRAME, 2))
         painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
 
+    def _map_rect(self) -> QRectF:
+        return QRectF(self.rect()).adjusted(2, 2, -2, -2)
+
     def _scaled(self, point: tuple[float, float]) -> tuple[float, float]:
-        return point[0] * self.width() / 240, point[1] * self.height() / 160
+        target = self._map_rect()
+        return (
+            target.left()
+            + (point[0] - KANTO_MAP_SOURCE_RECT.left())
+            * target.width()
+            / KANTO_MAP_SOURCE_RECT.width(),
+            target.top()
+            + (point[1] - KANTO_MAP_SOURCE_RECT.top())
+            * target.height()
+            / KANTO_MAP_SOURCE_RECT.height(),
+        )
 
     def _route_rect(self, location: Location) -> QRectF | None:
         bounds = location.map_bounds
         if bounds is None:
             return None
-        scale_x = self.width() / 240
-        scale_y = self.height() / 160
+        target = self._map_rect()
+        scale_x = target.width() / KANTO_MAP_SOURCE_RECT.width()
+        scale_y = target.height() / KANTO_MAP_SOURCE_RECT.height()
         return QRectF(
-            (8 * bounds.x + 32) * scale_x,
-            (8 * bounds.y + 32) * scale_y,
+            target.left()
+            + (8 * bounds.x + 32 - KANTO_MAP_SOURCE_RECT.left()) * scale_x,
+            target.top() + (8 * bounds.y + 32 - KANTO_MAP_SOURCE_RECT.top()) * scale_y,
             8 * bounds.width * scale_x,
             8 * bounds.height * scale_y,
         )
@@ -408,7 +616,9 @@ class KantoMap(QWidget):
         font.setBold(True)
         font.setPixelSize(10)
         painter.setFont(font)
-        painter.drawText(QRectF(x - 9, y - 9, 18, 18), Qt.AlignmentFlag.AlignCenter, label)
+        painter.drawText(
+            QRectF(x - 9, y - 9, 18, 18), Qt.AlignmentFlag.AlignCenter, label
+        )
 
     def _draw_match(
         self,
@@ -431,6 +641,244 @@ class KantoMap(QWidget):
         )
 
 
+class TownMapWidget(KantoMap):
+    """The region map on the blue field the game's town map screen uses."""
+
+    BACKDROP = QColor("#184878")
+    FRAME = QColor("#101828")
+
+
+class TownMapView(DragBar):
+    """FireRed town-map layout.
+
+    The map fills the window and the tracker speaks through the game's
+    message box, one page at a time, instead of through standing panels.
+    """
+
+    SIZE = (448, 472)
+    PLATE = QRectF(16, 16, 416, 56)
+    BOX = QRectF(16, 388, 416, 68)
+    BUTTON_SPACING = 6
+    PAGE_MS = 2600
+    CARET_MS = 450
+
+    INK_TEXT = QColor("#282830")
+    BLUE_TEXT = QColor("#4870b0")
+    TEXT_SHADOW = QColor("#b8b8c8")
+    BLUE_SHADOW = QColor("#c8d8f0")
+
+    def __init__(self, window: TrackerWindow) -> None:
+        super().__init__(window)
+        self.setFixedSize(*self.SIZE)
+        self.setAccessibleName("Rastreador de roamers sobre el mapa de Kanto")
+        self._snapshot: TrackerSnapshot | None = None
+        self._live = False
+        self._page = 0
+        self._caret = True
+
+        self.map = TownMapWidget(self, size=(416, 288))
+        self.map.move(16, 84)
+
+        self.pin_button = QToolButton(self)
+        self.pin_button.setObjectName("pinButton")
+        self.pin_button.setIcon(_pin_icon())
+        self.pin_button.setIconSize(QSize(13, 13))
+        self.pin_button.setCheckable(True)
+        self.pin_button.setChecked(True)
+        self.pin_button.setToolTip("Mantener siempre visible")
+        self.pin_button.toggled.connect(window.set_always_on_top)
+
+        self.close_button = QToolButton(self)
+        self.close_button.setObjectName("closeButton")
+        self.close_button.setText("×")
+        self.close_button.setToolTip("Cerrar")
+        self.close_button.clicked.connect(window.close)
+
+        self.setStyleSheet(
+            """
+            QToolButton {
+                min-width: 22px;
+                min-height: 22px;
+                border: 2px solid #4870b0;
+                border-radius: 4px;
+                background: #f8f8f8;
+                color: #404048;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QToolButton:hover { background: #d8e4f8; }
+            QToolButton:checked { background: #a8c0e0; }
+            """
+        )
+        self._place_buttons()
+
+        self._page_timer = QTimer(self)
+        self._page_timer.timeout.connect(self._turn_page)
+        self._page_timer.start(self.PAGE_MS)
+        self._caret_timer = QTimer(self)
+        self._caret_timer.timeout.connect(self._blink_caret)
+        self._caret_timer.start(self.CARET_MS)
+
+    def _place_buttons(self) -> None:
+        """Centre the buttons in the plate and record where the status ends."""
+        right = int(self.PLATE.right()) - 12
+        middle = int(self.PLATE.center().y())
+        for button in (self.close_button, self.pin_button):
+            size = button.sizeHint()
+            right -= size.width()
+            button.move(right, middle - size.height() // 2)
+            right -= self.BUTTON_SPACING
+        self._status_right = right
+
+    def set_snapshot(self, snapshot: TrackerSnapshot) -> None:
+        self._snapshot = snapshot
+        self.map.set_snapshot(snapshot)
+        self.update()
+
+    def set_connection(self, live: bool) -> None:
+        self._live = live
+        self.update()
+
+    def _turn_page(self) -> None:
+        self._page += 1
+        self.update()
+
+    def _blink_caret(self) -> None:
+        self._caret = not self._caret
+        self.update()
+
+    def pages(self) -> list[str]:
+        """The message-box script for the current situation, in order."""
+        snapshot = self._snapshot
+        if snapshot is None:
+            return ["Buscando el juego…"]
+        species = snapshot.roamer.species.name.upper()
+        if not snapshot.roamer.active:
+            return [
+                f"{species} todavía no recorre KANTO.",
+                "El rastreador sigue mirando.",
+            ]
+        if snapshot.same_area:
+            return [
+                f"¡{species} está en tu misma zona!",
+                f"Buscá en {snapshot.player.name.upper()}.",
+            ]
+        script = [
+            f"{species} está en {snapshot.roamer.location.name.upper()}.\n"
+            f"Vos estás en {snapshot.player.name.upper()}."
+        ]
+        forecast = snapshot.forecast
+        if forecast is None:
+            return script
+        script.append(
+            "Próximo movimiento:\n"
+            + "   ".join(
+                f"{chance.location.name.upper()} "
+                f"{_format_probability(chance.probability)}"
+                for chance in forecast.likely_routes[:3]
+            )
+        )
+        recommendation = forecast.recommendation
+        if recommendation is not None:
+            script.append(
+                f"¡Cruzá a {recommendation.route.name.upper()} ahora!\n"
+                "Lo interceptás en el próximo cambio."
+            )
+        return script
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        field = QLinearGradient(0, 0, 0, self.height())
+        field.setColorAt(0.0, QColor("#3878c8"))
+        field.setColorAt(0.5, QColor("#204878"))
+        field.setColorAt(1.0, QColor("#102038"))
+        painter.setBrush(field)
+        painter.setPen(QPen(QColor("#0c1828"), 2))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 10, 10)
+
+        self._paint_plate(painter)
+        self._paint_message(painter)
+
+    def _paint_plate(self, painter: QPainter) -> None:
+        _message_box(painter, self.PLATE)
+        snapshot = self._snapshot
+        if snapshot is None:
+            title, subtitle = "RASTREADOR", "KANTO"
+        else:
+            title = snapshot.roamer.species.name.upper()
+            subtitle = (
+                snapshot.roamer.location.name.upper()
+                if snapshot.roamer.active
+                else "INACTIVO"
+            )
+            painter.drawPixmap(
+                26,
+                20,
+                _scaled_sprite(str(ROAMER_ASSETS[snapshot.roamer.species]), 48),
+            )
+
+        painter.setFont(_pixel_font(15, bold=True))
+        _gba_text(
+            painter,
+            QRectF(84, 22, 240, 22),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            title,
+            self.INK_TEXT,
+            self.TEXT_SHADOW,
+        )
+        painter.setFont(_pixel_font(10, bold=True))
+        _gba_text(
+            painter,
+            QRectF(84, 46, 190, 18),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            subtitle,
+            self.BLUE_TEXT,
+            self.BLUE_SHADOW,
+        )
+        # Same row as the buttons, ending where _place_buttons() left off.
+        middle = self.PLATE.center().y()
+        _gba_text(
+            painter,
+            QRectF(200, middle - 9, self._status_right - 212, 18),
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            f"● {'EN VIVO' if self._live else 'SIN CONEXIÓN'}",
+            LIVE if self._live else CORAL,
+            QColor("#e0e4ec"),
+        )
+
+    def current_page(self) -> str:
+        script = self.pages()
+        return script[self._page % len(script)]
+
+    def _paint_message(self, painter: QPainter) -> None:
+        _message_box(painter, self.BOX)
+        script = self.pages()
+        painter.setFont(_pixel_font(13))
+        _gba_text(
+            painter,
+            self.BOX.adjusted(18, 12, -26, -10),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+            self.current_page(),
+            self.INK_TEXT,
+            self.TEXT_SHADOW,
+        )
+        if not self._caret or len(script) < 2:
+            return
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self.BLUE_TEXT)
+        corner = self.BOX.bottomRight()
+        painter.drawPolygon(
+            QPolygonF(
+                [
+                    QPointF(corner.x() - 30, corner.y() - 22),
+                    QPointF(corner.x() - 16, corner.y() - 22),
+                    QPointF(corner.x() - 23, corner.y() - 13),
+                ]
+            )
+        )
+
+
 class TrackerWindow(QWidget):
     def __init__(
         self,
@@ -438,18 +886,23 @@ class TrackerWindow(QWidget):
         port: int,
         interval: float,
         *,
+        ui: str = CLASSIC_UI,
         start_worker: bool = True,
         pin_controller: PinController | None | _AutoPinController = AUTO_PIN_CONTROLLER,
     ) -> None:
         super().__init__()
+        if ui not in UI_LAYOUTS:
+            raise ValueError("diseño de interfaz desconocido")
         self.host = host
         self.port = port
-        if pin_controller is AUTO_PIN_CONTROLLER:
-            self._pin_controller: PinController | None = (
+        self.ui = ui
+        if isinstance(pin_controller, _AutoPinController):
+            resolved_pin_controller: PinController | None = (
                 KWinPinController.for_current_session()
             )
         else:
-            self._pin_controller = pin_controller
+            resolved_pin_controller = pin_controller
+        self._pin_controller = resolved_pin_controller
         self._initial_pin_pending = self._pin_controller is not None
         self._displayed_species: RoamerSpecies | None = None
         self.setObjectName("shell")
@@ -460,15 +913,32 @@ class TrackerWindow(QWidget):
             flags |= Qt.WindowType.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(512, 680)
-        self._build_ui()
-        self._apply_styles()
+        # ponytail: two layouts, so the classic one stays inlined here and the
+        # town map is a child view. Extract a ClassicView if a third arrives.
+        self.town_map: TownMapView | None = None
+        if ui == TOWN_MAP_UI:
+            self._build_town_map_ui()
+        else:
+            self.setFixedSize(512, 680)
+            self._build_ui()
+            self._apply_styles()
 
         self.worker = TrackerThread(host, port, interval, self)
         self.worker.snapshot_ready.connect(self.show_snapshot)
         self.worker.connection_changed.connect(self.show_connection)
         if start_worker:
             self.worker.start()
+
+    def _build_town_map_ui(self) -> None:
+        self.setStyleSheet("QWidget#shell { background: transparent; }")
+        self.setFixedSize(*TownMapView.SIZE)
+        self.town_map = TownMapView(self)
+        self.pin_button = self.town_map.pin_button
+        self.map = self.town_map.map
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self.town_map)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -524,16 +994,24 @@ class TrackerWindow(QWidget):
 
         connection_row = QHBoxLayout()
         connection_row.setSpacing(7)
-        self.connection_dot = QLabel("●")
+        self.connection_dot = InlineIcon("dot", GOLD, 14)
         self.connection_dot.setObjectName("connectionDot")
         self.connection_label = QLabel("BUSCANDO EL JUEGO…")
         self.connection_label.setObjectName("connectionLabel")
         endpoint = QLabel(f"{self.host}:{self.port}")
         endpoint.setObjectName("endpoint")
-        connection_row.addWidget(self.connection_dot)
-        connection_row.addWidget(self.connection_label)
+        connection_row.addWidget(
+            self.connection_dot,
+            0,
+            Qt.AlignmentFlag.AlignVCenter,
+        )
+        connection_row.addWidget(
+            self.connection_label,
+            0,
+            Qt.AlignmentFlag.AlignVCenter,
+        )
         connection_row.addStretch()
-        connection_row.addWidget(endpoint)
+        connection_row.addWidget(endpoint, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(connection_row)
 
         self.map = KantoMap()
@@ -541,17 +1019,18 @@ class TrackerWindow(QWidget):
 
         legend = QHBoxLayout()
         legend.setSpacing(14)
-        legend.addWidget(self._legend("●", "VOS", "player"))
+        legend.addWidget(self._legend("dot", "VOS", "player", CYAN))
         self.roamer_legend_label = QLabel("ROAMER")
         legend.addWidget(
             self._legend(
-                "◆",
+                "diamond",
                 "ROAMER",
                 "roamer",
+                CORAL,
                 label=self.roamer_legend_label,
             )
         )
-        legend.addWidget(self._legend("▱", "PRÓX.", "next"))
+        legend.addWidget(self._legend("route", "PRÓX.", "next", GOLD))
         legend.addStretch()
         layout.addLayout(legend)
 
@@ -562,16 +1041,28 @@ class TrackerWindow(QWidget):
         match_layout = QHBoxLayout(self.match_banner)
         match_layout.setContentsMargins(12, 8, 12, 8)
         match_layout.setSpacing(8)
-        self.match_icon = QLabel("○")
+        self.match_icon = InlineIcon("ring", MUTED, 19)
         self.match_icon.setObjectName("matchIcon")
         self.match_text = QLabel("Calculando próximo movimiento")
         self.match_text.setObjectName("matchText")
         self.match_hint = QLabel("")
         self.match_hint.setObjectName("matchHint")
-        match_layout.addWidget(self.match_icon)
-        match_layout.addWidget(self.match_text)
+        match_layout.addWidget(
+            self.match_icon,
+            0,
+            Qt.AlignmentFlag.AlignVCenter,
+        )
+        match_layout.addWidget(
+            self.match_text,
+            0,
+            Qt.AlignmentFlag.AlignVCenter,
+        )
         match_layout.addStretch()
-        match_layout.addWidget(self.match_hint)
+        match_layout.addWidget(
+            self.match_hint,
+            0,
+            Qt.AlignmentFlag.AlignVCenter,
+        )
         layout.addWidget(self.match_banner)
 
         locations = QHBoxLayout()
@@ -599,9 +1090,10 @@ class TrackerWindow(QWidget):
 
     def _legend(
         self,
-        symbol: str,
+        kind: str,
         text: str,
         tone: str,
+        color: QColor,
         *,
         label: QLabel | None = None,
     ) -> QWidget:
@@ -609,12 +1101,12 @@ class TrackerWindow(QWidget):
         row = QHBoxLayout(item)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(5)
-        icon = QLabel(symbol)
+        icon = InlineIcon(kind, color, 13)
         icon.setObjectName(f"{tone}Legend")
         label = label or QLabel(text)
         label.setObjectName("legendLabel")
-        row.addWidget(icon)
-        row.addWidget(label)
+        row.addWidget(icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(label, 0, Qt.AlignmentFlag.AlignVCenter)
         return item
 
     def _location_card(
@@ -716,9 +1208,6 @@ class TrackerWindow(QWidget):
                 background: #f1c84b;
                 border-color: #f1c84b;
             }}
-            QLabel#connectionDot {{ color: #f1c84b; font-size: 13px; }}
-            QLabel#connectionDot[live="true"] {{ color: #63c79a; }}
-            QLabel#connectionDot[live="false"] {{ color: #e2554d; }}
             QLabel#connectionLabel {{
                 color: #dce5ec;
                 font-size: 10px;
@@ -726,9 +1215,6 @@ class TrackerWindow(QWidget):
                 letter-spacing: 1px;
             }}
             QLabel#endpoint {{ color: #7387a1; font-size: 9px; }}
-            QLabel#playerLegend {{ color: #49b8d0; font-size: 15px; }}
-            QLabel#roamerLegend {{ color: #e2554d; font-size: 15px; }}
-            QLabel#nextLegend {{ color: #f1c84b; font-size: 15px; }}
             QLabel#legendLabel {{ color: #9aabc1; font-size: 9px; font-weight: 700; }}
             QFrame#matchBanner {{
                 background: #172640;
@@ -743,9 +1229,6 @@ class TrackerWindow(QWidget):
                 background: #302d1d;
                 border-color: #f1c84b;
             }}
-            QLabel#matchIcon {{ color: #7387a1; font-size: 19px; }}
-            QFrame#matchBanner[matched="true"] QLabel#matchIcon {{ color: #f1c84b; }}
-            QFrame#matchBanner[mode="cross"] QLabel#matchIcon {{ color: #f1c84b; }}
             QLabel#matchText {{ color: #dce5ec; font-size: 11px; font-weight: 700; }}
             QFrame#matchBanner[matched="true"] QLabel#matchText {{ color: #fff4b0; }}
             QLabel#matchHint {{ color: #7387a1; font-size: 9px; }}
@@ -768,13 +1251,19 @@ class TrackerWindow(QWidget):
         )
 
     def show_connection(self, live: bool) -> None:
-        self.connection_dot.setProperty("live", live)
-        self.connection_dot.style().unpolish(self.connection_dot)
-        self.connection_dot.style().polish(self.connection_dot)
-        self.connection_label.setText("EN VIVO" if live else "SIN CONEXIÓN · REINTENTANDO")
+        if self.town_map is not None:
+            self.town_map.set_connection(live)
+            return
+        self.connection_dot.set_icon("dot", LIVE if live else CORAL)
+        self.connection_label.setText(
+            "EN VIVO" if live else "SIN CONEXIÓN · REINTENTANDO"
+        )
 
     def show_snapshot(self, snapshot: TrackerSnapshot) -> None:
         self._show_species(snapshot.roamer.species)
+        if self.town_map is not None:
+            self.town_map.set_snapshot(snapshot)
+            return
         self.map.set_snapshot(snapshot)
         self.roamer_location.setText(
             snapshot.roamer.location.name if snapshot.roamer.active else "INACTIVO"
@@ -783,35 +1272,34 @@ class TrackerWindow(QWidget):
         mode = "idle"
         tooltip = ""
         if not snapshot.roamer.active:
-            self.match_icon.setText("—")
+            self.match_icon.set_icon("dash", MUTED)
             self.match_text.setText("El roamer no está activo")
             self.match_hint.setText("Todavía no recorre Kanto")
         elif snapshot.same_area:
             mode = "matched"
-            self.match_icon.setText("◎")
+            self.match_icon.set_icon("double-ring", GOLD)
             self.match_text.setText("¡MISMA ZONA!")
             self.match_hint.setText("")
         elif snapshot.forecast is not None:
             recommendation = snapshot.forecast.recommendation
             tooltip = "Próximo movimiento: " + ", ".join(
-                f"{chance.location.name} "
-                f"{_format_probability(chance.probability)}"
+                f"{chance.location.name} {_format_probability(chance.probability)}"
                 for chance in snapshot.forecast.likely_routes
             )
             if recommendation is not None:
                 mode = "cross"
-                self.match_icon.setText("↗")
+                self.match_icon.set_icon("arrow", GOLD)
                 self.match_text.setText(
                     f"CRUZÁ A {recommendation.route.name.upper()}"
                     f" · {_format_probability(recommendation.probability)}"
                 )
                 self.match_hint.setText("INTERCEPCIÓN EN EL PRÓXIMO CAMBIO")
             else:
-                self.match_icon.setText("○")
+                self.match_icon.set_icon("ring", MUTED)
                 self.match_text.setText("PRÓXIMO MOVIMIENTO")
                 self.match_hint.setText("RUTAS PROBABLES EN EL MAPA")
         else:
-            self.match_icon.setText("○")
+            self.match_icon.set_icon("ring", MUTED)
             self.match_text.setText("Movimiento no disponible")
             self.match_hint.setText("")
 
@@ -825,19 +1313,16 @@ class TrackerWindow(QWidget):
         if species == self._displayed_species:
             return
         self._displayed_species = species
-        name = species.name.upper()
         sprite_path = ROAMER_ASSETS[species]
-        sprite = QPixmap(str(sprite_path)).scaled(
-            58,
-            58,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.FastTransformation,
-        )
-        self.roamer_sprite.setPixmap(sprite)
-        self.roamer_heading.setText(name)
-        self.roamer_legend_label.setText(name)
         self.setWindowTitle(f"Rastreador de {species.name}")
         self.setWindowIcon(QIcon(str(sprite_path)))
+        if self.town_map is not None:
+            # The town map paints the sprite and the name inside its plate.
+            return
+        name = species.name.upper()
+        self.roamer_sprite.setPixmap(_scaled_sprite(str(sprite_path), 58))
+        self.roamer_heading.setText(name)
+        self.roamer_legend_label.setText(name)
 
     def set_always_on_top(self, enabled: bool) -> None:
         if self._pin_controller is not None:
@@ -867,7 +1352,7 @@ class TrackerWindow(QWidget):
         if not self._initial_pin_pending:
             return
         app = QApplication.instance()
-        if app is not None and app.platformName() != "offscreen":
+        if isinstance(app, QApplication) and app.platformName() != "offscreen":
             self.activateWindow()
         QTimer.singleShot(50, self._apply_initial_pin)
 
@@ -928,12 +1413,25 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=positive_port, default=55355)
     parser.add_argument("--interval", type=positive_interval, default=0.20)
+    parser.add_argument(
+        "--ui",
+        choices=UI_LAYOUTS,
+        default=None,
+        help="diseño de la ventana; se recuerda para las próximas veces",
+    )
     args = parser.parse_args()
 
     app = QApplication([])
     app.setApplicationName("Rastreador de roamers")
     app.setQuitOnLastWindowClosed(True)
-    window = TrackerWindow(args.host, args.port, args.interval)
+
+    settings = QSettings("roamer-watcher", "tracker")
+    if args.ui is None:
+        ui = stored_ui_layout(settings)
+    else:
+        ui = args.ui
+        settings.setValue(UI_SETTINGS_KEY, ui)
+    window = TrackerWindow(args.host, args.port, args.interval, ui=ui)
     app.aboutToQuit.connect(window.stop_tracking)
 
     # Python's default SIGINT handler raises KeyboardInterrupt wherever the

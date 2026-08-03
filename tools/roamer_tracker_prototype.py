@@ -12,7 +12,7 @@ floating bar at the bottom, or the ← / → keys:
 
 Run:
 
-    uv run python roamer_tracker_prototype.py [--variant B]
+    uv run python src/roamer_tracker_prototype.py [--variant B]
 
 Throwaway code: no tests, no error handling, no abstractions worth keeping.
 It seeds the README's worked example so every variant is populated without
@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import argparse
 import signal
+import sys
+from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import (
@@ -37,9 +39,19 @@ from PySide6.QtGui import (
     QPixmap,
     QRadialGradient,
 )
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QToolButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QToolButton,
+    QWidget,
+)
 
-from roamer_tracker import (
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from main import (  # noqa: E402
     ASSET_ROOT,
     CORAL,
     CYAN,
@@ -54,14 +66,13 @@ from roamer_tracker import (
     positive_interval,
     positive_port,
 )
-from tracker import (
+from tracker import (  # noqa: E402
     SUICUNE,
     Roamer,
     TrackerSnapshot,
     forecast_movement,
     location_for,
 )
-
 
 # The README's worked example: roamer on Route 22, player entering Viridian
 # from Route 1, so Route 2 and Route 23 sit at 47,1% each.
@@ -117,9 +128,15 @@ def gba_text(
 def dot_row(painter: QPainter, rect: QRectF, label: str, value: str) -> None:
     metrics = painter.fontMetrics()
     dot_width = max(1, metrics.horizontalAdvance("."))
-    free = rect.width() - metrics.horizontalAdvance(label) - metrics.horizontalAdvance(value)
+    free = (
+        rect.width()
+        - metrics.horizontalAdvance(label)
+        - metrics.horizontalAdvance(value)
+    )
     dots = "." * max(0, int(free - 12) // dot_width)
-    gba_text(painter, rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+    gba_text(
+        painter, rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label
+    )
     gba_text(
         painter,
         rect,
@@ -167,7 +184,9 @@ def route_chances(snapshot: TrackerSnapshot) -> list[tuple[str, float, bool]]:
     forecast = snapshot.forecast
     if forecast is None or not snapshot.roamer.active:
         return []
-    recommended = forecast.recommendation.route.number if forecast.recommendation else None
+    recommended = (
+        forecast.recommendation.route.number if forecast.recommendation else None
+    )
     return [
         (
             chance.location.name.upper(),
@@ -258,11 +277,22 @@ class StyledMap(KantoMap):
             if snapshot.same_area and player is not None:
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
                 x, y = self._scaled(player)
-                painter.setBrush(QColor(self.route_color.red(), self.route_color.green(), self.route_color.blue(), 70))
+                painter.setBrush(
+                    QColor(
+                        self.route_color.red(),
+                        self.route_color.green(),
+                        self.route_color.blue(),
+                        70,
+                    )
+                )
                 painter.setPen(QPen(self.route_color, 3))
                 painter.drawEllipse(QRectF(x - 19, y - 19, 38, 38))
-                self._paint_marker(painter, (player[0] - 2.5, player[1]), self.player_color, "V", False)
-                self._paint_marker(painter, (player[0] + 2.5, player[1]), self.roamer_color, mark, True)
+                self._paint_marker(
+                    painter, (player[0] - 2.5, player[1]), self.player_color, "V", False
+                )
+                self._paint_marker(
+                    painter, (player[0] + 2.5, player[1]), self.roamer_color, mark, True
+                )
             else:
                 if snapshot.roamer.active and roamer is not None:
                     self._paint_marker(painter, roamer, self.roamer_color, mark, True)
@@ -282,7 +312,9 @@ class StyledMap(KantoMap):
 
     def _paint_routes(self, painter: QPainter, snapshot: TrackerSnapshot) -> None:
         forecast = snapshot.forecast
-        recommended = forecast.recommendation.route.number if forecast.recommendation else None
+        recommended = (
+            forecast.recommendation.route.number if forecast.recommendation else None
+        )
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, self.soft)
         taken: list[QRectF] = []
         for chance in forecast.likely_routes:
@@ -304,7 +336,9 @@ class StyledMap(KantoMap):
                 painter.drawRoundedRect(rect, 8, 8)
             else:
                 painter.drawRect(rect)
-            taken.append(self._paint_chip(painter, rect.center(), chance.probability, taken))
+            taken.append(
+                self._paint_chip(painter, rect.center(), chance.probability, taken)
+            )
 
     def _paint_chip(
         self,
@@ -324,10 +358,14 @@ class StyledMap(KantoMap):
         painter.setBrush(self.chip_bg)
         painter.drawRoundedRect(spot, 8 if self.soft else 3, 8 if self.soft else 3)
         painter.setFont(
-            sans_font(9, QFont.Weight.DemiBold) if self.soft else pixel_font(9, bold=True)
+            sans_font(9, QFont.Weight.DemiBold)
+            if self.soft
+            else pixel_font(9, bold=True)
         )
         painter.setPen(self.chip_fg)
-        painter.drawText(spot, Qt.AlignmentFlag.AlignCenter, _format_probability(probability))
+        painter.drawText(
+            spot, Qt.AlignmentFlag.AlignCenter, _format_probability(probability)
+        )
         return spot
 
     def _paint_marker(
@@ -364,7 +402,9 @@ class StyledMap(KantoMap):
         painter.setFont(
             sans_font(10, QFont.Weight.Bold) if self.soft else pixel_font(10, bold=True)
         )
-        painter.drawText(QRectF(x - 9, y - 9, 18, 18), Qt.AlignmentFlag.AlignCenter, label)
+        painter.drawText(
+            QRectF(x - 9, y - 9, 18, 18), Qt.AlignmentFlag.AlignCenter, label
+        )
 
 
 class Variant(QWidget):
@@ -514,9 +554,17 @@ class DexVariant(Variant):
         painter.setFont(pixel_font(13, bold=True))
         title = QRectF(196, 38, 240, 20)
         painter.setPen(QColor("#7A0E06"))
-        painter.drawText(title.translated(1, 1), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "POKéDEX · KANTO")
+        painter.drawText(
+            title.translated(1, 1),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            "POKéDEX · KANTO",
+        )
         painter.setPen(QColor("#FFF0E8"))
-        painter.drawText(title, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "POKéDEX · KANTO")
+        painter.drawText(
+            title,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            "POKéDEX · KANTO",
+        )
         painter.setFont(pixel_font(10))
         painter.setPen(self.status_color)
         painter.drawText(
@@ -591,7 +639,9 @@ class DexVariant(Variant):
             if self.snapshot.roamer.active
             else "INACTIVO",
         )
-        dot_row(painter, QRectF(44, 586, 456, 20), "VOS", self.snapshot.player.name.upper())
+        dot_row(
+            painter, QRectF(44, 586, 456, 20), "VOS", self.snapshot.player.name.upper()
+        )
         painter.setPen(QPen(QColor("#D8D8E0"), 1))
         painter.drawLine(QPointF(44, 612), QPointF(500, 612))
 
@@ -712,7 +762,10 @@ class TownMapVariant(Variant):
         snapshot = self.snapshot
         species = snapshot.roamer.species.name.upper()
         if not snapshot.roamer.active:
-            return [f"{species} todavía no recorre KANTO.", "El rastreador sigue mirando."]
+            return [
+                f"{species} todavía no recorre KANTO.",
+                "El rastreador sigue mirando.",
+            ]
         if snapshot.same_area:
             return [
                 f"¡{species} está en tu misma zona!",
@@ -726,11 +779,15 @@ class TownMapVariant(Variant):
         if chances:
             lines.append(
                 "Próximo movimiento:\n"
-                + "   ".join(f"{name} {_format_probability(p)}" for name, p, _ in chances[:3])
+                + "   ".join(
+                    f"{name} {_format_probability(p)}" for name, p, _ in chances[:3]
+                )
             )
         best = next((row for row in chances if row[2]), None)
         if best is not None:
-            lines.append(f"¡Cruzá a {best[0]} ahora!\nLo interceptás en el próximo cambio.")
+            lines.append(
+                f"¡Cruzá a {best[0]} ahora!\nLo interceptás en el próximo cambio."
+            )
         return lines
 
     def paintEvent(self, _event) -> None:
@@ -862,7 +919,9 @@ class BattleVariant(Variant):
         painter.setPen(QPen(QColor("#282830"), 3))
         painter.drawRoundedRect(rect, 10, 10)
 
-    def _bar(self, painter: QPainter, rect: QRectF, fraction: float, color: QColor) -> None:
+    def _bar(
+        self, painter: QPainter, rect: QRectF, fraction: float, color: QColor
+    ) -> None:
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#404048"))
         painter.drawRoundedRect(rect, 4, 4)
@@ -1064,7 +1123,9 @@ class GlassVariant(Variant):
         widget.move(68, 100)
         return widget
 
-    def _glass(self, painter: QPainter, rect: QRectF, radius: float, alpha: int = 40) -> None:
+    def _glass(
+        self, painter: QPainter, rect: QRectF, radius: float, alpha: int = 40
+    ) -> None:
         painter.setPen(Qt.PenStyle.NoPen)
         for step in range(1, 5):
             painter.setBrush(QColor(0, 0, 0, 16))
@@ -1137,7 +1198,9 @@ class GlassVariant(Variant):
         painter.drawText(
             QRectF(112, 468, 260, 30),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            self.snapshot.roamer.location.name if self.snapshot.roamer.active else "Inactivo",
+            self.snapshot.roamer.location.name
+            if self.snapshot.roamer.active
+            else "Inactivo",
         )
         painter.setFont(sans_font(11))
         painter.setPen(QColor(255, 255, 255, 160))
@@ -1176,7 +1239,9 @@ class GlassVariant(Variant):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             "Próximo movimiento",
         )
-        for index, (name, probability, best) in enumerate(route_chances(self.snapshot)[:2]):
+        for index, (name, probability, best) in enumerate(
+            route_chances(self.snapshot)[:2]
+        ):
             row = QRectF(38, 576 + index * 32, 444, 26)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(255, 255, 255, 26))
@@ -1216,7 +1281,12 @@ class GlassVariant(Variant):
             )
 
 
-VARIANTS: list[type[Variant]] = [DexVariant, TownMapVariant, BattleVariant, GlassVariant]
+VARIANTS: list[type[Variant]] = [
+    DexVariant,
+    TownMapVariant,
+    BattleVariant,
+    GlassVariant,
+]
 
 
 class SwitcherBar(QFrame):
